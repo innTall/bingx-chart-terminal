@@ -12,6 +12,7 @@ import type { Candle } from '../types/market';
 
 const props = defineProps<{
 	candles: Candle[];
+	latestCandle?: Candle | null;
 	loading: boolean;
 	error: string | null;
 	symbolLabel: string;
@@ -85,6 +86,21 @@ watch(
 	() => props.candles,
 	(nextCandles) => {
 		applyCandles(nextCandles);
+	},
+	{ deep: false }
+);
+
+watch(
+	() => props.latestCandle,
+	(nextLatest) => {
+		if (!series || !nextLatest) return;
+		series.update({
+			time: nextLatest.time as UTCTimestamp,
+			open: nextLatest.open,
+			high: nextLatest.high,
+			low: nextLatest.low,
+			close: nextLatest.close,
+		});
 	},
 	{ deep: false }
 );

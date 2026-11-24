@@ -6,7 +6,7 @@ export interface MarketSymbolItem {
   symbol: string;
   /** Чистое имя для UI, например 'BTC' */
   label: string;
-  /** Последняя/опорная цена, если возвращается эндпоинтом */
+  /** Актуальная цена */
   price: number | null;
 }
 
@@ -30,7 +30,10 @@ export async function fetchBingxContracts(
 
   const list = Array.isArray(rawData)
     ? rawData
-    : rawData && typeof rawData === 'object' && 'contracts' in rawData && Array.isArray((rawData as { contracts: unknown[] }).contracts)
+    : rawData &&
+        typeof rawData === 'object' &&
+        'contracts' in rawData &&
+        Array.isArray((rawData as { contracts: unknown[] }).contracts)
       ? (rawData as { contracts: unknown[] }).contracts
       : [];
 
@@ -55,7 +58,6 @@ export async function fetchBingxContracts(
     });
   }
 
-  // Если API вернул пустой список (например, при нестандартном ответе), сохраняем конфигурируемый список
   if (items.length === 0 && symbols.length > 0) {
     return symbols.map((sym) => {
       const normalized = sym.trim().toUpperCase();
@@ -68,4 +70,45 @@ export async function fetchBingxContracts(
   }
 
   return items;
+}
+
+/** Загружает актуальные цены по списку символов */
+export async function fetchBingxPrices(
+  symbols: readonly string[] = WATCHLIST_SYMBOLS,
+  signal?: AbortSignal
+): Promise<Record<string, number>> {
+  const targetSet = new Set(symbols.map((s) => s.trim().toUpperCase()));
+  const prices: Record<string, number> = {};
+
+  if (targetSet.size === 0) return prices;
+
+  const rawData = await bingxGet<unknown>(
+    '/openApi/swap/v2/quote/ticker',
+    targetSet.size === 1 ? { symbol: Array.from(targetSet)[0] } : undefined,
+    signal
+  );
+
+  const list = Array.isArray(rawData)
+    ? rawData
+    : rawData && typeof rawData === 'object'
+      ? [rawData]
+      : [];
+
+  for (const entry of list) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Record<string, unknown>;
+    const rawSymbol = typeof row.symbol === 'string' ? row.symbol.trim().toUpperCase() : '';
+
+    if (!rawSymbol || !targetSet.has(rawSymbol)) continue;
+
+    const price = toOptionalPositiveNumber(
+      row.lastPrice ?? row.price ?? row.c ?? row.markPrice
+    );
+
+    if (price !== null) {
+      prices[rawSymbol] = price;
+    }
+  }
+
+  return prices;
 }
