@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Minus, Square } from 'lucide-vue-next';
+import { Magnet, Minus, Square } from 'lucide-vue-next';
 import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 
 export type DataSourceType = 'bingx' | 'oanda';
@@ -10,6 +10,7 @@ defineProps<{
 	activeTimeframe: Timeframe;
 	activeSource: DataSourceType;
 	activeTool: DrawingToolType;
+	magnetEnabled: boolean;
 	contractError: string | null;
 }>();
 
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 	(e: 'select-timeframe', tf: Timeframe): void;
 	(e: 'select-source', source: DataSourceType): void;
 	(e: 'select-tool', tool: DrawingToolType): void;
+	(e: 'toggle-magnet'): void;
 }>();
 
 function toggleTool(current: DrawingToolType, target: Exclude<DrawingToolType, 'none'>) {
@@ -26,7 +28,7 @@ function toggleTool(current: DrawingToolType, target: Exclude<DrawingToolType, '
 
 <template>
 	<header class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-		<!-- Левая зона: Logo + RM chart + активный символ и TF -->
+		<!-- Левая зона -->
 		<div class="flex items-center gap-3">
 			<div class="flex items-center gap-2">
 				<img src="/favicon.svg" alt="RM chart" class="h-6 w-6 shrink-0 object-contain" />
@@ -49,7 +51,7 @@ function toggleTool(current: DrawingToolType, target: Exclude<DrawingToolType, '
 			</span>
 		</div>
 
-		<!-- Центральная зона: заглушки BingX / Oanda + кнопки разметки -->
+		<!-- Центральная зона: BingX / Oanda + Луч / Прямоугольник / Магнит -->
 		<div class="flex items-center gap-3">
 			<div class="flex items-center rounded border border-slate-800 bg-slate-900/90 p-0.5 text-xs">
 				<button type="button" class="rounded px-2.5 py-1 font-medium transition" :class="activeSource === 'bingx'
@@ -83,6 +85,16 @@ function toggleTool(current: DrawingToolType, target: Exclude<DrawingToolType, '
 						" @click="toggleTool(activeTool, 'rectangle')">
 					<Square class="h-3.5 w-3.5" />
 					<span>Прямоугольник</span>
+				</button>
+
+				<span class="mx-0.5 h-4 w-px bg-slate-800" />
+
+				<button type="button" title="Магнит к High / Low / Close" :aria-pressed="magnetEnabled"
+					class="flex items-center gap-1 rounded px-2 py-1 font-medium transition" :class="magnetEnabled
+							? 'bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/50'
+							: 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+						" @click="emit('toggle-magnet')">
+					<Magnet class="h-3.5 w-3.5" />
 				</button>
 			</div>
 		</div>

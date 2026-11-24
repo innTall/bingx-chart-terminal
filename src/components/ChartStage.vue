@@ -11,8 +11,11 @@ import {
 	type UTCTimestamp,
 } from 'lightweight-charts';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { loadSavedBarSpacing, saveBarSpacing } from '../services/storage/terminalStorage';
+import type { DrawingObject } from '../types/drawings';
 import type { Candle } from '../types/market';
+import { loadSavedBarSpacing, saveBarSpacing } from '../services/storage/terminalStorage';
+import ChartDrawingsOverlay from './ChartDrawingsOverlay.vue';
+import type { DrawingToolType } from './TopHeader.vue';
 
 interface VisibleBounds {
 	minLow: number;
@@ -24,10 +27,21 @@ const props = defineProps<{
 	latestCandle?: Candle | null;
 	loading: boolean;
 	error: string | null;
+	symbol: string;
+	activeTool: DrawingToolType;
+	magnetEnabled: boolean;
+	drawings: readonly DrawingObject[];
+}>();
+
+const emit = defineEmits<{
+	(e: 'update:drawings', items: DrawingObject[]): void;
+	(e: 'clear-tool'): void;
 }>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
 const hoveredCandle = ref<Candle | null>(null);
+const chartRef = ref<IChartApi | null>(null);
+const seriesRef = ref<ISeriesApi<'Candlestick'> | null>(null);
 
 let chart: IChartApi | null = null;
 let series: ISeriesApi<'Candlestick'> | null = null;
@@ -56,7 +70,6 @@ function computeVisibleBounds(range: LogicalRange | null, list: Candle[]): Visib
 	if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh)) return null;
 
 	const span = maxHigh - minLow;
-	// Верхний интервал уменьшен вдвое (2% от диапазона), нижний оставлен мягким (4%)
 	const topPad = span > 0 ? span * 0.02 : Math.max(maxHigh * 0.005, 0.0001);
 	const bottomPad = span > 0 ? span * 0.04 : Math.max(maxHigh * 0.01, 0.0001);
 
@@ -149,7 +162,7 @@ onMounted(() => {
 		},
 		rightPriceScale: {
 			autoScale: true,
-			borderColor: '#1e293b',
+			borderColor: '#262626',
 		},
 		timeScale: {
 			timeVisible: true,
@@ -157,21 +170,24 @@ onMounted(() => {
 			rightOffset: 12,
 			minBarSpacing: 1.5,
 			barSpacing: initialSpacing,
-			borderColor: '#1e293b',
+			borderColor: '#262626',
 		},
 	});
 
 	series = chart.addSeries(CandlestickSeries, {
-		upColor: '#0e870e',
-		downColor: '#cbd5e1',
+		upColor: '#22c55e',
+		downColor: '#ef4444',
 		borderVisible: false,
-		wickUpColor: '#cbd5e1',
-		wickDownColor: '#cbd5e1',
+		wickUpColor: '#22c55e',
+		wickDownColor: '#ef4444',
 		priceLineVisible: true,
 		priceLineWidth: 1,
 		priceLineColor: '#38bdf8',
 		autoscaleInfoProvider: handleAutoscaleInfo,
 	});
+
+	chartRef.value = chart;
+	seriesRef.value = series;
 
 	applyCandles(props.candles);
 
@@ -256,14 +272,16 @@ onBeforeUnmount(() => {
 	chart?.remove();
 	chart = null;
 	series = null;
+	chartRef.value = null;
+	seriesRef.value = null;
 });
 </script>
 
 <template>
 	<div
-		class="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-slate-800 bg-slate-950">
+		class="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-slate-800 bg-[#161616]">
 		<div v-if="hoveredCandle"
-			class="pointer-events-none absolute left-2.5 top-2 z-10 flex flex-wrap items-center gap-2 rounded bg-slate-900/80 px-2 py-1 font-mono text-[11px] text-slate-300">
+			class="pointer-events-none absolute left-2.5 top-2 z-20 flex flex-wrap items-center gap-2 rounded bg-[#161616]/85 px-2 py-1 font-mono text-[11px] text-slate-300">
 			<span>O <strong class="font-normal text-slate-100">{{ formatPrice(hoveredCandle.open) }}</strong></span>
 			<span>H <strong class="font-normal text-emerald-400">{{ formatPrice(hoveredCandle.high) }}</strong></span>
 			<span>L <strong class="font-normal text-rose-400">{{ formatPrice(hoveredCandle.low) }}</strong></span>
@@ -271,15 +289,19 @@ onBeforeUnmount(() => {
 		</div>
 
 		<div v-if="error"
-			class="absolute left-2.5 top-9 z-10 rounded border border-rose-800/70 bg-rose-950/90 px-3 py-1.5 text-xs text-rose-200">
+			class="absolute left-2.5 top-9 z-20 rounded border border-rose-800/70 bg-rose-950/90 px-3 py-1.5 text-xs text-rose-200">
 			{{ error }}
 		</div>
 
 		<div v-else-if="loading && candles.length === 0"
-			class="pointer-events-none absolute left-2.5 top-9 z-10 rounded border border-slate-800 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-300">
+			class="pointer-events-none absolute left-2.5 top-9 z-20 rounded border border-slate-800 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-300">
 			Загрузка...
 		</div>
 
 		<div ref="containerRef" class="h-full min-h-0 w-full flex-1" />
+
+		<ChartDrawingsOverlay :chart="chartRef" :series="seriesRef" :candles="candles" :symbol="symbol"
+			:active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+			@update:drawings="emit('update:drawings', $event)" @clear-tool="emit('clear-tool')" />
 	</div>
 </template>

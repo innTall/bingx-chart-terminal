@@ -19,6 +19,11 @@ import {
 	fetchBingxPrices,
 	type MarketSymbolItem,
 } from '../services/bingx/tickers';
+import {
+	loadDrawingsForSymbol,
+	scheduleDrawingsSave,
+} from '../services/storage/drawingsStorage';
+import type { DrawingObject } from '../types/drawings';
 import type { Candle } from '../types/market';
 
 const symbols = ref<MarketSymbolItem[]>(
@@ -33,17 +38,19 @@ const activeSymbol = ref<string>(WATCHLIST_SYMBOLS[0] ?? 'BTC-USDT');
 const activeTimeframe = ref<Timeframe>('15m');
 const activeSource = ref<DataSourceType>('bingx');
 const activeTool = ref<DrawingToolType>('none');
+const magnetEnabled = ref<boolean>(true);
 
+const drawings = ref<DrawingObject[]>([]);
 const candles = ref<Candle[]>([]);
 const latestCandle = ref<Candle | null>(null);
 const loadingCandles = ref<boolean>(false);
 const candleError = ref<string | null>(null);
-
 const contractError = ref<string | null>(null);
 
 const activeSymbolLabel = computed(() => toDisplaySymbol(activeSymbol.value));
 
 let klinesRequestSeq = 0;
+let drawingsLoadSeq = 0;
 let activeAbortController: AbortController | null = null;
 let liveSub: LiveKlineSubscription | null = null;
 let pricesTimerId: number | null = null;
@@ -53,6 +60,19 @@ function applySymbolPrice(symbol: string, price: number) {
 	symbols.value = symbols.value.map((item) =>
 		item.symbol === upper ? { ...item, price } : item
 	);
+}
+
+async function loadDrawings(symbol: string) {
+	const seq = ++drawingsLoadSeq;
+	const loaded = await loadDrawingsForSymbol(symbol);
+	if (seq !== drawingsLoadSeq || symbol !== activeSymbol.value) return;
+	drawings.value = loaded;
+}
+
+function handleDrawingsUpdate(nextItems: DrawingObject[]) {
+	const symbolKey = activeSymbol.value;
+	drawings.value = nextItems;
+	scheduleDrawingsSave(symbolKey, nextItems);
 }
 
 async function refreshWatchlistPrices() {
@@ -162,12 +182,18 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 
 onMounted(() => {
 	void loadContracts();
+	void loadDrawings(activeSymbol.value);
 	void loadCandles(activeSymbol.value, activeTimeframe.value);
 	void refreshWatchlistPrices();
 
 	pricesTimerId = window.setInterval(() => {
 		void refreshWatchlistPrices();
 	}, 5000);
+});
+
+watch(activeSymbol, (nextSymbol) => {
+	activeTool.value = 'none';
+	void loadDrawings(nextSymbol);
 });
 
 watch([activeSymbol, activeTimeframe], ([nextSymbol, nextTf]) => {
@@ -187,20 +213,22 @@ onBeforeUnmount(() => {
 <template>
 	<div class="flex h-screen flex-col gap-2 overflow-hidden bg-[#161616] p-2.5 text-slate-100">
 		<TopHeader :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
-			:active-source="activeSource" :active-tool="activeTool" :contract-error="contractError"
-			@select-timeframe="activeTimeframe = $event" @select-source="activeSource = $event"
-			@select-tool="activeTool = $event" />
+			:active-source="activeSource" :active-tool="activeTool" :magnet-enabled="magnetEnabled"
+			:contract-error="contractError" @select-timeframe="activeTimeframe = $event"
+			@select-source="activeSource = $event" @select-tool="activeTool = $event"
+			@toggle-magnet="magnetEnabled = !magnetEnabled" />
 
 		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
 			<section class="flex h-full min-h-0 flex-col">
-				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError" />
+				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
+					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" />
 			</section>
 
 			<WatchlistPanel class="h-full min-h-0" :items="symbols" :active-symbol="activeSymbol"
 				@select-symbol="activeSymbol = $event" />
 		</main>
 
-		<BottomFooter :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
-			:candles-count="candles.length" :has-error="Boolean(candleError || contractError)" />
+		<BottomFooter />
 	</div>
 </template>
