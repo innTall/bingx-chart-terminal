@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import BottomFooter from '../components/BottomFooter.vue';
 import ChartStage from '../components/ChartStage.vue';
-import TopHeader from '../components/TopHeader.vue';
+import TopHeader, {
+	type DataSourceType,
+	type DrawingToolType,
+} from '../components/TopHeader.vue';
 import WatchlistPanel from '../components/WatchlistPanel.vue';
 import {
 	toDisplaySymbol,
@@ -28,13 +31,14 @@ const symbols = ref<MarketSymbolItem[]>(
 
 const activeSymbol = ref<string>(WATCHLIST_SYMBOLS[0] ?? 'BTC-USDT');
 const activeTimeframe = ref<Timeframe>('15m');
+const activeSource = ref<DataSourceType>('bingx');
+const activeTool = ref<DrawingToolType>('none');
 
 const candles = ref<Candle[]>([]);
 const latestCandle = ref<Candle | null>(null);
 const loadingCandles = ref<boolean>(false);
 const candleError = ref<string | null>(null);
 
-const loadingContracts = ref<boolean>(false);
 const contractError = ref<string | null>(null);
 
 const activeSymbolLabel = computed(() => toDisplaySymbol(activeSymbol.value));
@@ -57,7 +61,8 @@ async function refreshWatchlistPrices() {
 			.map((item) => item.symbol)
 			.filter((sym) => sym !== activeSymbol.value);
 
-		const targets = inactiveSymbols.length > 0 ? inactiveSymbols : symbols.value.map((s) => s.symbol);
+		const targets =
+			inactiveSymbols.length > 0 ? inactiveSymbols : symbols.value.map((s) => s.symbol);
 		const pricesMap = await fetchBingxPrices(targets);
 
 		if (Object.keys(pricesMap).length === 0) return;
@@ -68,7 +73,7 @@ async function refreshWatchlistPrices() {
 			return nextPrice !== undefined ? { ...item, price: nextPrice } : item;
 		});
 	} catch {
-		// Ошибки фонового обновления цен не блокируют активный график
+		// Фоновое обновление цен не блокирует основной интерфейс
 	}
 }
 
@@ -102,7 +107,6 @@ function restartLiveStream(symbol: string, timeframe: Timeframe) {
 }
 
 async function loadContracts() {
-	loadingContracts.value = true;
 	contractError.value = null;
 
 	try {
@@ -113,8 +117,6 @@ async function loadContracts() {
 	} catch (err) {
 		contractError.value =
 			err instanceof Error ? err.message : 'Не удалось загрузить список символов';
-	} finally {
-		loadingContracts.value = false;
 	}
 }
 
@@ -183,18 +185,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="flex h-screen flex-col gap-3 overflow-hidden bg-slate-950 p-4 text-slate-100">
-		<TopHeader :active-timeframe="activeTimeframe" :symbols-count="symbols.length" :loading-contracts="loadingContracts"
-			:contract-error="contractError" @select-timeframe="activeTimeframe = $event" />
+	<div class="flex h-screen flex-col gap-2 overflow-hidden bg-[#161616] p-2.5 text-slate-100">
+		<TopHeader :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
+			:active-source="activeSource" :active-tool="activeTool" :contract-error="contractError"
+			@select-timeframe="activeTimeframe = $event" @select-source="activeSource = $event"
+			@select-tool="activeTool = $event" />
 
-		<div class="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[240px_1fr]">
-			<WatchlistPanel :items="symbols" :active-symbol="activeSymbol" @select-symbol="activeSymbol = $event" />
-
-			<section class="flex min-h-0 flex-col">
-				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
-					:symbol-label="activeSymbolLabel" :timeframe="activeTimeframe" />
+		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
+			<section class="flex h-full min-h-0 flex-col">
+				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError" />
 			</section>
-		</div>
+
+			<WatchlistPanel class="h-full min-h-0" :items="symbols" :active-symbol="activeSymbol"
+				@select-symbol="activeSymbol = $event" />
+		</main>
 
 		<BottomFooter :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
 			:candles-count="candles.length" :has-error="Boolean(candleError || contractError)" />

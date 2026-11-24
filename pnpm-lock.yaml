@@ -11,6 +11,9 @@ importers:
       lightweight-charts:
         specifier: ^5.3.0
         version: 5.3.0
+      lucide-vue-next:
+        specifier: ^1.0.0
+        version: 1.0.0(vue@3.5.46(typescript@6.0.3))
       vue:
         specifier: ^3.5.44
         version: 3.5.46(typescript@6.0.3)
@@ -474,6 +477,12 @@ packages:
 
   lightweight-charts@5.3.0:
     resolution: {integrity: sha512-w16fu2/FteUkIJdgc9G2tOCKs1fwFSqnqF8+kMgHGv0uGIfcfpEJhziSaQbML1yrkbeg4nQXV3msjmhBzhLNhw==}
+
+  lucide-vue-next@1.0.0:
+    resolution: {integrity: sha512-V6SPvx1IHTj/UY+FrIYWV5faISsPSb8BnWSFDxAtezWKvWc9ZZ40PDrdu1/Qb5vg4lHWr1hs1BAMGVGm6V1Xdg==}
+    deprecated: Package deprecated. Please use @lucide/vue instead.
+    peerDependencies:
+      vue: '>=3.0.1'
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
@@ -976,6 +985,10 @@ snapshots:
   lightweight-charts@5.3.0:
     dependencies:
       fancy-canvas: 2.1.0
+
+  lucide-vue-next@1.0.0(vue@3.5.46(typescript@6.0.3)):
+    dependencies:
+      vue: 3.5.46(typescript@6.0.3)
 
   magic-string@0.30.21:
     dependencies:
