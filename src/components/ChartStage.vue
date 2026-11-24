@@ -1,141 +1,121 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
 	CandlestickSeries,
 	ColorType,
 	createChart,
-	type CandlestickData,
 	type IChartApi,
 	type ISeriesApi,
 	type UTCTimestamp,
 } from 'lightweight-charts';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Candle } from '../types/market';
 
-const props = withDefaults(
-	defineProps<{
-		candles?: Candle[];
-		symbol?: string;
-	}>(),
-	{
-		candles: () => [],
-		symbol: 'BTC-USDT',
-	}
-);
+const props = defineProps<{
+	candles: Candle[];
+	loading: boolean;
+	error: string | null;
+	symbolLabel: string;
+	timeframe: string;
+}>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
 
 let chart: IChartApi | null = null;
-let candleSeries: ISeriesApi<'Candlestick'> | null = null;
+let series: ISeriesApi<'Candlestick'> | null = null;
 let resizeObserver: ResizeObserver | null = null;
-let lastCandleTime: number | null = null;
 
-function toSeriesData(items: Candle[]): CandlestickData<UTCTimestamp>[] {
-	return items.map((c) => ({
+function applyCandles(list: Candle[]) {
+	if (!series) return;
+	const formatted = list.map((c) => ({
 		time: c.time as UTCTimestamp,
 		open: c.open,
 		high: c.high,
 		low: c.low,
 		close: c.close,
 	}));
+	series.setData(formatted);
+	if (formatted.length > 0) {
+		chart?.timeScale().fitContent();
+	}
 }
 
-function initChart() {
-	const el = containerRef.value;
-	if (!el) return;
+onMounted(() => {
+	if (!containerRef.value) return;
 
-	chart = createChart(el, {
-		width: el.clientWidth,
-		height: el.clientHeight,
+	const rect = containerRef.value.getBoundingClientRect();
+	chart = createChart(containerRef.value, {
+		width: Math.max(rect.width, 300),
+		height: Math.max(rect.height, 260),
 		layout: {
-			background: { type: ColorType.Solid, color: '#0b0f17' },
-			textColor: '#9ca3af',
+			background: { type: ColorType.Solid, color: '#0f172a' },
+			textColor: '#cbd5e1',
 		},
 		grid: {
-			vertLines: { color: '#1f2937' },
-			horzLines: { color: '#1f2937' },
-		},
-		rightPriceScale: {
-			borderColor: '#374151',
+			vertLines: { color: '#1e293b' },
+			horzLines: { color: '#1e293b' },
 		},
 		timeScale: {
-			borderColor: '#374151',
 			timeVisible: true,
 			secondsVisible: false,
 		},
 	});
 
-	candleSeries = chart.addSeries(CandlestickSeries, {
-		upColor: '#10b981',
+	series = chart.addSeries(CandlestickSeries, {
+		upColor: '#22c55e',
 		downColor: '#ef4444',
 		borderVisible: false,
-		wickUpColor: '#10b981',
+		wickUpColor: '#22c55e',
 		wickDownColor: '#ef4444',
 	});
 
-	if (props.candles.length > 0) {
-		const formatted = toSeriesData(props.candles);
-		candleSeries.setData(formatted);
-		lastCandleTime = formatted[formatted.length - 1].time as number;
-	}
+	applyCandles(props.candles);
 
 	resizeObserver = new ResizeObserver((entries) => {
-		for (const entry of entries) {
-			if (!chart) continue;
-			const { width, height } = entry.contentRect;
-			chart.applyOptions({
-				width: Math.max(0, Math.floor(width)),
-				height: Math.max(0, Math.floor(height)),
-			});
-		}
+		const entry = entries[0];
+		if (!entry || !chart) return;
+		const width = Math.max(Math.floor(entry.contentRect.width), 200);
+		const height = Math.max(Math.floor(entry.contentRect.height), 200);
+		chart.resize(width, height);
 	});
 
-	resizeObserver.observe(el);
-}
+	resizeObserver.observe(containerRef.value);
+});
 
 watch(
 	() => props.candles,
 	(nextCandles) => {
-		if (!candleSeries || nextCandles.length === 0) return;
-
-		const formatted = toSeriesData(nextCandles);
-		const latest = formatted[formatted.length - 1];
-		const latestTime = latest.time as number;
-
-		// Если добавилась новая свеча или обновилась последняя — используем update()
-		if (lastCandleTime !== null && latestTime >= lastCandleTime && formatted.length > 1) {
-			const prevTime = formatted[formatted.length - 2].time as number;
-			if (latestTime === lastCandleTime || prevTime === lastCandleTime) {
-				candleSeries.update(latest);
-				lastCandleTime = latestTime;
-				return;
-			}
-		}
-
-		candleSeries.setData(formatted);
-		lastCandleTime = latestTime;
+		applyCandles(nextCandles);
 	},
 	{ deep: false }
 );
-
-onMounted(() => {
-	initChart();
-});
 
 onBeforeUnmount(() => {
 	resizeObserver?.disconnect();
 	resizeObserver = null;
 	chart?.remove();
 	chart = null;
-	candleSeries = null;
+	series = null;
 });
 </script>
 
 <template>
-	<section class="relative flex h-full w-full flex-col bg-slate-950 text-slate-100">
-		<div class="flex items-center justify-between border-b border-slate-800 px-3 py-2 text-xs">
-			<span class="font-semibold tracking-wide text-slate-200">{{ symbol }}</span>
-			<span class="text-slate-400">Candles: {{ candles.length }}</span>
+	<div class="flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-slate-800 bg-slate-950">
+		<div class="flex items-center justify-between border-b border-slate-800 px-3 py-2 text-xs text-slate-300">
+			<span class="font-semibold text-slate-100">{{ symbolLabel }} · {{ timeframe }}</span>
+			<span v-if="loading" class="text-amber-400">Загрузка свечей...</span>
+			<span v-else-if="error" class="text-rose-400">Ошибка</span>
+			<span v-else class="text-emerald-400">Свечей: {{ candles.length }}</span>
 		</div>
-		<div ref="containerRef" class="h-screen min-h-0 flex-1 w-full" />
-	</section>
+
+		<div v-if="error" class="m-4 rounded border border-rose-800/60 bg-rose-950/40 p-3 text-xs text-rose-200">
+			{{ error }}
+		</div>
+
+		<div v-else-if="!loading && candles.length === 0"
+			class="m-4 rounded border border-slate-800 bg-slate-900/60 p-3 text-xs text-slate-400">
+			Нет данных свечей для {{ symbolLabel }} ({{ timeframe }}).
+		</div>
+
+		<div ref="containerRef" class="min-h-0 w-full flex-1" />
+	</div>
 </template>
