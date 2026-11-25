@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Trash2 } from 'lucide-vue-next';
+import { BookmarkPlus, Trash2 } from 'lucide-vue-next';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DrawingToolType } from './TopHeader.vue';
@@ -7,7 +7,9 @@ import {
 	DEFAULT_DRAWING_STYLE,
 	DRAWING_COLOR_PRESETS,
 	DRAWING_WIDTH_PRESETS,
+	type DrawingKind,
 	type DrawingObject,
+	type DrawingPreset,
 	type PriceTimePoint,
 } from '../types/drawings';
 import type { Candle } from '../types/market';
@@ -16,6 +18,7 @@ import { resolvePointWithMagnet } from '../utils/magnet';
 type DragMode =
 	| { type: 'none' }
 	| { type: 'draft-rect'; id: string; start: PriceTimePoint }
+	| { type: 'draft-segment'; id: string; start: PriceTimePoint }
 	| { type: 'move-ray'; id: string; offsetTime: number; offsetPrice: number }
 	| {
 		type: 'move-rect';
@@ -24,7 +27,44 @@ type DragMode =
 		origStart: PriceTimePoint;
 		origEnd: PriceTimePoint;
 	}
-	| { type: 'resize-rect-end'; id: string };
+	| {
+		type: 'move-segment';
+		id: string;
+		anchor: PriceTimePoint;
+		origStart: PriceTimePoint;
+		origEnd: PriceTimePoint;
+	}
+	| { type: 'resize-rect-end'; id: string }
+	| { type: 'resize-segment-end'; id: string };
+
+type ComputedShape =
+	| {
+		item: DrawingObject;
+		kind: 'ray';
+		x1: number;
+		y1: number;
+		x2: number;
+		y2: number;
+	}
+	| {
+		item: DrawingObject;
+		kind: 'rectangle';
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		endX: number;
+		endY: number;
+	}
+	| {
+		item: DrawingObject;
+		kind: 'segment';
+		x1: number;
+		y1: number;
+		x2: number;
+		endX: number;
+		price: number;
+	};
 
 const props = defineProps<{
 	chart: IChartApi | null;
@@ -34,11 +74,13 @@ const props = defineProps<{
 	activeTool: DrawingToolType;
 	magnetEnabled: boolean;
 	drawings: readonly DrawingObject[];
+	activePreset?: DrawingPreset | null;
 }>();
 
 const emit = defineEmits<{
 	(e: 'update:drawings', items: DrawingObject[]): void;
 	(e: 'clear-tool'): void;
+	(e: 'save-preset', drawing: DrawingObject): void;
 }>();
 
 const overlayRef = ref<SVGSVGElement | null>(null);
@@ -108,6 +150,17 @@ function pickPoint(event: PointerEvent): PriceTimePoint | null {
 	});
 }
 
+function buildInitialStyle(kind: DrawingKind): DrawingObject['style'] {
+	if (props.activePreset && props.activePreset.kind === kind) {
+		return {
+			color: props.activePreset.color,
+			lineWidth: props.activePreset.lineWidth,
+			label: props.activePreset.label,
+		};
+	}
+	return { ...DEFAULT_DRAWING_STYLE };
+}
+
 function commitDrawings(next: DrawingObject[]) {
 	emit('update:drawings', next);
 	bumpRender();
@@ -126,7 +179,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			symbol: props.symbol,
 			kind: 'ray',
 			start: point,
-			style: { ...DEFAULT_DRAWING_STYLE },
+			style: buildInitialStyle('ray'),
 		};
 		selectedId.value = id;
 		commitDrawings([...props.drawings, nextItem]);
@@ -143,11 +196,29 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			kind: 'rectangle',
 			start: point,
 			end: point,
-			style: { ...DEFAULT_DRAWING_STYLE },
+			style: buildInitialStyle('rectangle'),
 		};
 		selectedId.value = id;
 		commitDrawings([...props.drawings, nextItem]);
 		dragState = { type: 'draft-rect', id, start: point };
+		(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+		return;
+	}
+
+	if (props.activeTool === 'segment') {
+		if (props.drawings.length >= 20) return;
+		const id = `seg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+		const nextItem: DrawingObject = {
+			id,
+			symbol: props.symbol,
+			kind: 'segment',
+			start: point,
+			end: { time: point.time, price: point.price },
+			style: buildInitialStyle('segment'),
+		};
+		selectedId.value = id;
+		commitDrawings([...props.drawings, nextItem]);
+		dragState = { type: 'draft-segment', id, start: point };
 		(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
 	}
 }
@@ -176,6 +247,15 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 			origStart: { ...item.start },
 			origEnd: { ...item.end },
 		};
+	} else if (item.kind === 'segment') {
+		const endPt = item.end ?? item.start;
+		dragState = {
+			type: 'move-segment',
+			id: item.id,
+			anchor: point,
+			origStart: { ...item.start },
+			origEnd: { ...endPt },
+		};
 	}
 
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
@@ -186,6 +266,14 @@ function handleRectRightEdgePointerDown(event: PointerEvent, item: DrawingObject
 	event.stopPropagation();
 	selectedId.value = item.id;
 	dragState = { type: 'resize-rect-end', id: item.id };
+	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+}
+
+function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject) {
+	if (event.button !== 0) return;
+	event.stopPropagation();
+	selectedId.value = item.id;
+	dragState = { type: 'resize-segment-end', id: item.id };
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
 }
 
@@ -202,9 +290,29 @@ function handlePointerMove(event: PointerEvent) {
 		return;
 	}
 
+	if (dragState.type === 'draft-segment') {
+		const draftId = dragState.id;
+		commitDrawings(
+			props.drawings.map((d) => {
+				if (d.id !== draftId) return d;
+				return {
+					...d,
+					end: {
+						time: point.time,
+						price: d.start.price,
+					},
+				};
+			})
+		);
+		return;
+	}
+
 	if (dragState.type === 'move-ray') {
 		const targetId = dragState.id;
-		const nextTime = Math.max(1, Math.floor(Number(point.time) + dragState.offsetTime)) as UTCTimestamp;
+		const nextTime = Math.max(
+			1,
+			Math.floor(Number(point.time) + dragState.offsetTime)
+		) as UTCTimestamp;
 		const nextPrice = point.price + dragState.offsetPrice;
 		commitDrawings(
 			props.drawings.map((d) =>
@@ -225,12 +333,49 @@ function handlePointerMove(event: PointerEvent) {
 				return {
 					...d,
 					start: {
-						time: Math.max(1, Math.floor(Number(moveState.origStart.time) + dt)) as UTCTimestamp,
+						time: Math.max(
+							1,
+							Math.floor(Number(moveState.origStart.time) + dt)
+						) as UTCTimestamp,
 						price: moveState.origStart.price + dp,
 					},
 					end: {
-						time: Math.max(1, Math.floor(Number(moveState.origEnd.time) + dt)) as UTCTimestamp,
+						time: Math.max(
+							1,
+							Math.floor(Number(moveState.origEnd.time) + dt)
+						) as UTCTimestamp,
 						price: moveState.origEnd.price + dp,
+					},
+				};
+			})
+		);
+		return;
+	}
+
+	if (dragState.type === 'move-segment') {
+		const moveState = dragState;
+		const dt = Number(point.time) - Number(moveState.anchor.time);
+		const dp = point.price - moveState.anchor.price;
+		const nextPrice = moveState.origStart.price + dp;
+
+		commitDrawings(
+			props.drawings.map((d) => {
+				if (d.id !== moveState.id) return d;
+				return {
+					...d,
+					start: {
+						time: Math.max(
+							1,
+							Math.floor(Number(moveState.origStart.time) + dt)
+						) as UTCTimestamp,
+						price: nextPrice,
+					},
+					end: {
+						time: Math.max(
+							1,
+							Math.floor(Number(moveState.origEnd.time) + dt)
+						) as UTCTimestamp,
+						price: nextPrice,
 					},
 				};
 			})
@@ -252,11 +397,28 @@ function handlePointerMove(event: PointerEvent) {
 				};
 			})
 		);
+		return;
+	}
+
+	if (dragState.type === 'resize-segment-end') {
+		const targetId = dragState.id;
+		commitDrawings(
+			props.drawings.map((d) => {
+				if (d.id !== targetId) return d;
+				return {
+					...d,
+					end: {
+						time: point.time,
+						price: d.start.price,
+					},
+				};
+			})
+		);
 	}
 }
 
 function handlePointerUp() {
-	if (dragState.type === 'draft-rect') {
+	if (dragState.type === 'draft-rect' || dragState.type === 'draft-segment') {
 		emit('clear-tool');
 	}
 	dragState = { type: 'none' };
@@ -272,6 +434,11 @@ function updateSelectedStyle(patch: Partial<DrawingObject['style']>) {
 	);
 }
 
+function saveSelectedAsPreset() {
+	if (!selectedDrawing.value) return;
+	emit('save-preset', selectedDrawing.value);
+}
+
 function deleteSelected() {
 	if (!selectedId.value) return;
 	const id = selectedId.value;
@@ -279,7 +446,7 @@ function deleteSelected() {
 	commitDrawings(props.drawings.filter((d) => d.id !== id));
 }
 
-const computedShapes = computed(() => {
+const computedShapes = computed<ComputedShape[]>(() => {
 	void renderTick.value;
 	void props.candles.length;
 
@@ -287,40 +454,59 @@ const computedShapes = computed(() => {
 	const paneWidth = props.chart?.timeScale().width() ?? fullWidth;
 	const rightEdge = Math.max(0, paneWidth);
 
-	return props.drawings
-		.map((item) => {
-			const y1 = priceToY(item.start.price);
-			const x1 = timeToX(item.start.time);
-			if (y1 === null || x1 === null) return null;
+	const result: ComputedShape[] = [];
 
-			if (item.kind === 'ray') {
-				return {
-					item,
-					kind: 'ray' as const,
-					x1,
-					y1,
-					x2: Math.max(x1, rightEdge),
-					y2: y1,
-				};
-			}
+	for (const item of props.drawings) {
+		const y1 = priceToY(item.start.price);
+		const x1 = timeToX(item.start.time);
+		if (y1 === null || x1 === null) continue;
 
+		if (item.kind === 'ray') {
+			result.push({
+				item,
+				kind: 'ray',
+				x1,
+				y1,
+				x2: Math.max(x1, rightEdge),
+				y2: y1,
+			});
+			continue;
+		}
+
+		if (item.kind === 'segment') {
 			const endPoint = item.end ?? item.start;
 			const x2 = timeToX(endPoint.time);
-			const y2 = priceToY(endPoint.price);
-			if (x2 === null || y2 === null) return null;
-
-			return {
+			if (x2 === null) continue;
+			result.push({
 				item,
-				kind: 'rectangle' as const,
-				left: Math.min(x1, x2),
-				top: Math.min(y1, y2),
-				width: Math.max(2, Math.abs(x2 - x1)),
-				height: Math.max(2, Math.abs(y2 - y1)),
+				kind: 'segment',
+				x1,
+				y1,
+				x2,
 				endX: x2,
-				endY: y2,
-			};
-		})
-		.filter((v): v is NonNullable<typeof v> => v !== null);
+				price: item.start.price,
+			});
+			continue;
+		}
+
+		const endPoint = item.end ?? item.start;
+		const x2 = timeToX(endPoint.time);
+		const y2 = priceToY(endPoint.price);
+		if (x2 === null || y2 === null) continue;
+
+		result.push({
+			item,
+			kind: 'rectangle',
+			left: Math.min(x1, x2),
+			top: Math.min(y1, y2),
+			width: Math.max(2, Math.abs(x2 - x1)),
+			height: Math.max(2, Math.abs(y2 - y1)),
+			endX: x2,
+			endY: y2,
+		});
+	}
+
+	return result;
 });
 
 watch(
@@ -376,13 +562,19 @@ onBeforeUnmount(() => {
 				class="w-32 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
 				@input="updateSelectedStyle({ label: ($event.target as HTMLInputElement).value })" />
 
+			<button type="button" title="Сохранить настройки в пресет"
+				class="rounded p-1 text-amber-300 transition hover:bg-amber-950/50 hover:text-amber-200"
+				@click="saveSelectedAsPreset">
+				<BookmarkPlus class="h-3.5 w-3.5" />
+			</button>
+
 			<button type="button" title="Удалить элемент"
 				class="rounded p-1 text-rose-400 transition hover:bg-rose-950/60 hover:text-rose-300" @click="deleteSelected">
 				<Trash2 class="h-3.5 w-3.5" />
 			</button>
 		</div>
 
-		<!-- SVG-слой для Луча и Прямоугольника -->
+		<!-- SVG-слой для Луча, Отрезка и Прямоугольника -->
 		<svg ref="overlayRef" class="h-full w-full"
 			:class="activeTool !== 'none' ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
 			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp">
@@ -392,6 +584,18 @@ onBeforeUnmount(() => {
 					<line :x1="shape.x1" :y1="shape.y1" :x2="shape.x2" :y2="shape.y2" :stroke="shape.item.style.color"
 						:stroke-width="shape.item.style.lineWidth" />
 					<text v-if="shape.item.style.label" :x="shape.x2 - 6" :y="shape.y1 - 5" text-anchor="end"
+						:fill="shape.item.style.color" class="select-none font-sans text-[11px] font-medium">
+						{{ shape.item.style.label }}
+					</text>
+				</template>
+
+				<template v-else-if="shape.kind === 'segment'">
+					<line :x1="shape.x1" :y1="shape.y1" :x2="shape.x2" :y2="shape.y1" :stroke="shape.item.style.color"
+						:stroke-width="shape.item.style.lineWidth" />
+					<circle v-if="selectedId === shape.item.id" :cx="shape.endX" :cy="shape.y1" r="4" fill="#161616"
+						:stroke="shape.item.style.color" stroke-width="2" class="cursor-ew-resize"
+						@pointerdown="handleSegmentRightPointerDown($event, shape.item)" />
+					<text v-if="shape.item.style.label" :x="shape.endX - 6" :y="shape.y1 - 5" text-anchor="end"
 						:fill="shape.item.style.color" class="select-none font-sans text-[11px] font-medium">
 						{{ shape.item.style.label }}
 					</text>

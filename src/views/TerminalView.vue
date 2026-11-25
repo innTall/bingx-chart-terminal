@@ -23,7 +23,13 @@ import {
 	loadDrawingsForSymbol,
 	scheduleDrawingsSave,
 } from '../services/storage/drawingsStorage';
-import type { DrawingObject } from '../types/drawings';
+import {
+	deleteDrawingPreset,
+	formatDefaultPresetName,
+	loadDrawingPresets,
+	saveDrawingPresets,
+} from '../services/storage/presetsStorage';
+import type { DrawingObject, DrawingPreset } from '../types/drawings';
 import type { Candle } from '../types/market';
 
 const symbols = ref<MarketSymbolItem[]>(
@@ -39,6 +45,9 @@ const activeTimeframe = ref<Timeframe>('15m');
 const activeSource = ref<DataSourceType>('bingx');
 const activeTool = ref<DrawingToolType>('none');
 const magnetEnabled = ref<boolean>(true);
+
+const presets = ref<DrawingPreset[]>(loadDrawingPresets());
+const activePreset = ref<DrawingPreset | null>(null);
 
 const drawings = ref<DrawingObject[]>([]);
 const candles = ref<Candle[]>([]);
@@ -73,6 +82,35 @@ function handleDrawingsUpdate(nextItems: DrawingObject[]) {
 	const symbolKey = activeSymbol.value;
 	drawings.value = nextItems;
 	scheduleDrawingsSave(symbolKey, nextItems);
+}
+
+function handleSavePreset(drawing: DrawingObject) {
+	const customText = drawing.style.label.trim();
+	const resolvedName =
+		customText.length > 0
+			? customText
+			: formatDefaultPresetName(drawing.kind, activeTimeframe.value);
+
+	const newPreset: DrawingPreset = {
+		id: `preset_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+		name: resolvedName,
+		kind: drawing.kind,
+		color: drawing.style.color,
+		lineWidth: drawing.style.lineWidth,
+		label: customText || resolvedName,
+	};
+
+	const next = [...presets.value, newPreset];
+	presets.value = next;
+	activePreset.value = newPreset;
+	saveDrawingPresets(next);
+}
+
+function handleDeletePreset(presetId: string) {
+	presets.value = deleteDrawingPreset(presets.value, presetId);
+	if (activePreset.value?.id === presetId) {
+		activePreset.value = null;
+	}
 }
 
 async function refreshWatchlistPrices() {
@@ -214,15 +252,17 @@ onBeforeUnmount(() => {
 	<div class="flex h-screen flex-col gap-2 overflow-hidden bg-[#161616] p-2.5 text-slate-100">
 		<TopHeader :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
 			:active-source="activeSource" :active-tool="activeTool" :magnet-enabled="magnetEnabled"
-			:contract-error="contractError" @select-timeframe="activeTimeframe = $event"
-			@select-source="activeSource = $event" @select-tool="activeTool = $event"
+			:contract-error="contractError" :presets="presets" :active-preset-id="activePreset?.id ?? null"
+			@select-timeframe="activeTimeframe = $event" @select-source="activeSource = $event"
+			@select-tool="activeTool = $event" @select-preset="activePreset = $event" @delete-preset="handleDeletePreset"
 			@toggle-magnet="magnetEnabled = !magnetEnabled" />
 
 		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
 			<section class="flex h-full min-h-0 flex-col">
 				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
 					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
-					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" />
+					:active-preset="activePreset" @save-preset="handleSavePreset" @update:drawings="handleDrawingsUpdate"
+					@clear-tool="activeTool = 'none'" />
 			</section>
 
 			<WatchlistPanel class="h-full min-h-0" :items="symbols" :active-symbol="activeSymbol"

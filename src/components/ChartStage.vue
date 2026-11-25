@@ -11,7 +11,7 @@ import {
 	type UTCTimestamp,
 } from 'lightweight-charts';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { DrawingObject } from '../types/drawings';
+import type { DrawingObject, DrawingPreset } from '../types/drawings';
 import type { Candle } from '../types/market';
 import { loadSavedBarSpacing, saveBarSpacing } from '../services/storage/terminalStorage';
 import ChartDrawingsOverlay from './ChartDrawingsOverlay.vue';
@@ -31,11 +31,13 @@ const props = defineProps<{
 	activeTool: DrawingToolType;
 	magnetEnabled: boolean;
 	drawings: readonly DrawingObject[];
+	activePreset?: DrawingPreset | null;
 }>();
 
 const emit = defineEmits<{
 	(e: 'update:drawings', items: DrawingObject[]): void;
 	(e: 'clear-tool'): void;
+	(e: 'save-preset', drawing: DrawingObject): void;
 }>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -175,11 +177,11 @@ onMounted(() => {
 	});
 
 	series = chart.addSeries(CandlestickSeries, {
-		upColor: '#22c55e',
-		downColor: '#ef4444',
+		upColor: '#0e870e',
+		downColor: '#cddcdd',
 		borderVisible: false,
-		wickUpColor: '#22c55e',
-		wickDownColor: '#ef4444',
+		wickUpColor: '#cddcdd',
+		wickDownColor: '#cddcdd',
 		priceLineVisible: true,
 		priceLineWidth: 1,
 		priceLineColor: '#38bdf8',
@@ -302,6 +304,7 @@ onBeforeUnmount(() => {
 
 		<ChartDrawingsOverlay :chart="chartRef" :series="seriesRef" :candles="candles" :symbol="symbol"
 			:active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+			:active-preset="activePreset ?? null" @save-preset="emit('save-preset', $event)"
 			@update:drawings="emit('update:drawings', $event)" @clear-tool="emit('clear-tool')" />
 	</div>
 </template>
