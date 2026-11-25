@@ -47,7 +47,7 @@ export function startLiveKlineStream(params: {
     } catch (err) {
       if (stopped || controller.signal.aborted) return;
       if (onError) {
-        onError(err instanceof Error ? err.message : 'Ошибка живого обновления');
+        onError(err instanceof Error ? err.message : 'Live kline update error');
       }
     } finally {
       if (!stopped) {

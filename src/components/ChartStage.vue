@@ -22,6 +22,22 @@ interface VisibleBounds {
 	maxHigh: number;
 }
 
+// Смещение времени графика в UTC+2 (в секундах)
+const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60;
+
+// Настройки вертикального заполнения поля графика (удобно менять под свой глаз)
+const VERTICAL_SCALE_CONFIG = {
+	// Доля ценового диапазона (maxHigh - minLow) сверху и снизу
+	topPricePadRatio: 0.005,
+	bottomPricePadRatio: 0.01,
+	// Доли высоты правой ценовой шкалы (0..0.5): меньше значение = плотнее растяжение по вертикали
+	scaleMarginTop: 0.03,
+	scaleMarginBottom: 0.05,
+	// Дополнительные пиксельные отступы внутри autoscaleInfoProvider
+	pixelMarginAbove: 4,
+	pixelMarginBelow: 6,
+};
+
 const props = defineProps<{
 	candles: Candle[];
 	latestCandle?: Candle | null;
@@ -52,6 +68,14 @@ let visibleBounds: VisibleBounds | null = null;
 let spacingSaveTimer: number | null = null;
 let isInitialLoadDone = false;
 
+function toChartTimestamp(utcSec: number): UTCTimestamp {
+	return (Number(utcSec) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
+}
+
+function fromChartTimestamp(shiftedSec: number): number {
+	return Number(shiftedSec) - UTC_PLUS_2_OFFSET_SEC;
+}
+
 function computeVisibleBounds(range: LogicalRange | null, list: Candle[]): VisibleBounds | null {
 	if (!range || list.length === 0) return null;
 
@@ -72,8 +96,14 @@ function computeVisibleBounds(range: LogicalRange | null, list: Candle[]): Visib
 	if (!Number.isFinite(minLow) || !Number.isFinite(maxHigh)) return null;
 
 	const span = maxHigh - minLow;
-	const topPad = span > 0 ? span * 0.02 : Math.max(maxHigh * 0.005, 0.0001);
-	const bottomPad = span > 0 ? span * 0.04 : Math.max(maxHigh * 0.01, 0.0001);
+	const topPad =
+		span > 0
+			? span * VERTICAL_SCALE_CONFIG.topPricePadRatio
+			: Math.max(maxHigh * 0.001, 0.0001);
+	const bottomPad =
+		span > 0
+			? span * VERTICAL_SCALE_CONFIG.bottomPricePadRatio
+			: Math.max(maxHigh * 0.002, 0.0001);
 
 	return {
 		minLow: minLow - bottomPad,
@@ -109,7 +139,10 @@ const handleAutoscaleInfo: AutoscaleInfoProvider = (baseImpl) => {
 			minValue: visibleBounds.minLow,
 			maxValue: visibleBounds.maxHigh,
 		},
-		margins: base?.margins,
+		margins: {
+			above: VERTICAL_SCALE_CONFIG.pixelMarginAbove,
+			below: VERTICAL_SCALE_CONFIG.pixelMarginBelow,
+		},
 	};
 };
 
@@ -117,7 +150,7 @@ function applyCandles(list: Candle[]) {
 	if (!series || !chart) return;
 
 	const formatted = list.map((c) => ({
-		time: c.time as UTCTimestamp,
+		time: toChartTimestamp(c.time),
 		open: c.open,
 		high: c.high,
 		low: c.low,
@@ -165,6 +198,10 @@ onMounted(() => {
 		rightPriceScale: {
 			autoScale: true,
 			borderColor: '#262626',
+			scaleMargins: {
+				top: VERTICAL_SCALE_CONFIG.scaleMarginTop,
+				bottom: VERTICAL_SCALE_CONFIG.scaleMarginBottom,
+			},
 		},
 		timeScale: {
 			timeVisible: true,
@@ -216,7 +253,7 @@ onMounted(() => {
 			bar.close !== undefined
 		) {
 			hoveredCandle.value = {
-				time: bar.time,
+				time: fromChartTimestamp(bar.time),
 				open: bar.open,
 				high: bar.high,
 				low: bar.low,
@@ -253,7 +290,7 @@ watch(
 	(nextLatest) => {
 		if (!series || !nextLatest) return;
 		series.update({
-			time: nextLatest.time as UTCTimestamp,
+			time: toChartTimestamp(nextLatest.time),
 			open: nextLatest.open,
 			high: nextLatest.high,
 			low: nextLatest.low,
@@ -297,7 +334,7 @@ onBeforeUnmount(() => {
 
 		<div v-else-if="loading && candles.length === 0"
 			class="pointer-events-none absolute left-2.5 top-9 z-20 rounded border border-slate-800 bg-slate-900/90 px-2.5 py-1 text-xs text-slate-300">
-			Загрузка...
+			Loading...
 		</div>
 
 		<div ref="containerRef" class="h-full min-h-0 w-full flex-1" />

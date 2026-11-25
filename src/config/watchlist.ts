@@ -1,4 +1,4 @@
-export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1D';
+export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
 export interface BingxConfig {
   directBaseUrl: string;
@@ -13,7 +13,7 @@ export const TIMEFRAMES: readonly Timeframe[] = [
   '15m',
   '1h',
   '4h',
-  '1D',
+  '1d',
 ];
 
 export const BINGX_CONFIG: BingxConfig = {

@@ -10,6 +10,13 @@ export interface FetchKlinesParams {
   signal?: AbortSignal;
 }
 
+// BingX v3 klines ожидает интервалы в нижнем регистре (например, '1d' вместо '1D')
+function toBingxInterval(interval: Timeframe): string {
+  const normalized = interval.trim();
+  if (normalized === '1M') return '1M';
+  return normalized.toLowerCase();
+}
+
 function toUnixSeconds(rawTime: unknown): UTCTimestamp | null {
   const num = typeof rawTime === 'number' ? rawTime : Number(rawTime);
   if (!Number.isFinite(num) || num <= 0) return null;
@@ -60,7 +67,7 @@ export async function fetchBingxKlines({
     '/openApi/swap/v3/quote/klines',
     {
       symbol: symbol.trim().toUpperCase(),
-      interval,
+      interval: toBingxInterval(interval),
       limit: safeLimit,
     },
     signal
