@@ -3,6 +3,8 @@ import { BookmarkPlus, Trash2 } from 'lucide-vue-next';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DrawingToolType } from './TopHeader.vue';
+import SegmentDrawing from './drawings/SegmentDrawing.vue';
+import RayDrawing from './drawings/RayDrawing.vue';
 import {
 	DEFAULT_DRAWING_STYLE,
 	DRAWING_COLOR_PRESETS,
@@ -634,26 +636,12 @@ onBeforeUnmount(() => {
 			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointerleave="clearChartCrosshair">
 			<g v-for="shape in computedShapes" :key="shape.item.id" class="pointer-events-auto cursor-move"
 				@pointerdown="handleShapePointerDown($event, shape.item)">
-				<template v-if="shape.kind === 'ray'">
-					<line :x1="shape.x1" :y1="shape.y1" :x2="shape.x2" :y2="shape.y2" :stroke="shape.item.style.color"
-						:stroke-width="shape.item.style.lineWidth" />
-					<text v-if="shape.item.style.label" :x="shape.x2 - 6" :y="shape.y1 - 5" text-anchor="end"
-						:fill="shape.item.style.color" class="select-none font-sans text-[11px] font-medium">
-						{{ shape.item.style.label }}
-					</text>
-				</template>
+				<RayDrawing v-if="shape.kind === 'ray'" :item="shape.item" :x1="shape.x1" :y1="shape.y1" :x2="shape.x2"
+					:y2="shape.y2" @shape-pointer-down="handleShapePointerDown" />
 
-				<template v-else-if="shape.kind === 'segment'">
-					<line :x1="shape.x1" :y1="shape.y1" :x2="shape.x2" :y2="shape.y1" :stroke="shape.item.style.color"
-						:stroke-width="shape.item.style.lineWidth" />
-					<circle v-if="selectedId === shape.item.id" :cx="shape.endX" :cy="shape.y1" r="4" fill="#161616"
-						:stroke="shape.item.style.color" stroke-width="2" class="cursor-ew-resize"
-						@pointerdown="handleSegmentRightPointerDown($event, shape.item)" />
-					<text v-if="shape.item.style.label" :x="shape.endX - 6" :y="shape.y1 - 5" text-anchor="end"
-						:fill="shape.item.style.color" class="select-none font-sans text-[11px] font-medium">
-						{{ shape.item.style.label }}
-					</text>
-				</template>
+				<SegmentDrawing v-else-if="shape.kind === 'segment'" :item="shape.item" :x1="shape.x1" :y1="shape.y1"
+					:x2="shape.x2" :end-x="shape.endX" :selected="selectedId === shape.item.id"
+					@shape-pointer-down="handleShapePointerDown" @right-handle-pointer-down="handleSegmentRightPointerDown" />
 
 				<template v-else>
 					<rect :x="shape.left" :y="shape.top" :width="shape.width" :height="shape.height" stroke="none"
