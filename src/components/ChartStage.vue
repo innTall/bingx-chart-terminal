@@ -38,6 +38,38 @@ const VERTICAL_SCALE_CONFIG = {
 	pixelMarginBelow: 6,
 };
 
+const PRICE_MAX_CHARS = 7;
+
+function formatCompactPrice(val: number, decimalSep = '.'): string {
+	if (!Number.isFinite(val)) return '—';
+	const sign = val < 0 ? '-' : '';
+	const absVal = Math.abs(val);
+	const intPart = Math.trunc(absVal).toString();
+	const intLenWithSign = sign.length + intPart.length;
+
+	if (intLenWithSign >= PRICE_MAX_CHARS) {
+		return `${sign}${Math.round(absVal).toString()}`;
+	}
+
+	const remainingForDecimalAndFrac = PRICE_MAX_CHARS - intLenWithSign;
+	if (remainingForDecimalAndFrac <= 1) {
+		return `${sign}${Math.round(absVal).toString()}`;
+	}
+
+	const maxDecimals = remainingForDecimalAndFrac - 1;
+	const factor = 10 ** maxDecimals;
+	const roundedAbs = Math.round(absVal * factor) / factor;
+
+	const roundedInt = Math.trunc(roundedAbs).toString();
+	if (sign.length + roundedInt.length >= PRICE_MAX_CHARS) {
+		return `${sign}${Math.round(roundedAbs).toString()}`;
+	}
+
+	const fixed = roundedAbs.toFixed(maxDecimals).replace(/\.?0+$/, '');
+	const result = `${sign}${fixed}`.replace('.', decimalSep);
+	return result.slice(0, PRICE_MAX_CHARS);
+}
+
 const props = defineProps<{
 	candles: Candle[];
 	latestCandle?: Candle | null;
@@ -147,6 +179,24 @@ const handleAutoscaleInfo: AutoscaleInfoProvider = (baseImpl) => {
 	};
 };
 
+function applyPricePrecision(list: Candle[]) {
+	if (!series || list.length === 0) return;
+	const refPrice = list[list.length - 1]?.close ?? list[0]?.close ?? 1;
+	const absVal = Math.abs(refPrice);
+	const intLen = Math.trunc(absVal).toString().length;
+	// 7 символов всего минус целая часть и точка
+	const precision = intLen >= PRICE_MAX_CHARS - 1 ? 0 : Math.min(5, Math.max(0, PRICE_MAX_CHARS - intLen - 1));
+	const minMove = Number((10 ** -precision).toFixed(precision));
+
+	series.applyOptions({
+		priceFormat: {
+			type: 'price',
+			precision,
+			minMove,
+		},
+	});
+}
+
 function applyCandles(list: Candle[]) {
 	if (!series || !chart) return;
 
@@ -158,6 +208,7 @@ function applyCandles(list: Candle[]) {
 		close: c.close,
 	}));
 
+	applyPricePrecision(list);
 	series.setData(formatted);
 
 	const savedSpacing = loadSavedBarSpacing();
@@ -195,6 +246,9 @@ onMounted(() => {
 		},
 		crosshair: {
 			mode: CrosshairMode.Normal,
+		},
+		localization: {
+			priceFormatter: (price: number) => formatCompactPrice(price, '.'),
 		},
 		rightPriceScale: {
 			autoScale: true,

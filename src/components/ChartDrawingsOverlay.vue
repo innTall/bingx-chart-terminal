@@ -300,7 +300,10 @@ function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject)
 }
 
 function handlePointerMove(event: PointerEvent) {
-	if (dragState.type === 'none') return;
+	if (dragState.type === 'none') {
+		syncChartCrosshair(event);
+		return;
+	}
 	const point = pickPoint(event);
 	if (!point) return;
 
@@ -444,6 +447,27 @@ function handlePointerUp() {
 		emit('clear-tool');
 	}
 	dragState = { type: 'none' };
+}
+
+function syncChartCrosshair(event: PointerEvent) {
+	if (!props.chart || !props.series) return;
+	if (dragState.type !== 'none' || props.activeTool !== 'none') return;
+
+	const coords = getLocalCoords(event);
+	if (!coords) return;
+
+	const rawTime = xToTime(coords.x);
+	const rawPrice = yToPrice(coords.y);
+	if (rawTime === null || rawPrice === null || !Number.isFinite(rawPrice)) return;
+
+	const shiftedTime = (Number(rawTime) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
+	props.chart.setCrosshairPosition(rawPrice, shiftedTime, props.series);
+}
+
+function clearChartCrosshair() {
+	if (dragState.type === 'none') {
+		props.chart?.clearCrosshairPosition();
+	}
 }
 
 function updateSelectedStyle(patch: Partial<DrawingObject['style']>) {
@@ -607,7 +631,7 @@ onBeforeUnmount(() => {
 		<!-- SVG-слой для Луча, Отрезка и Прямоугольника -->
 		<svg ref="overlayRef" class="h-full w-full"
 			:class="activeTool !== 'none' ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
-			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp">
+			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointerleave="clearChartCrosshair">
 			<g v-for="shape in computedShapes" :key="shape.item.id" class="pointer-events-auto cursor-move"
 				@pointerdown="handleShapePointerDown($event, shape.item)">
 				<template v-if="shape.kind === 'ray'">
