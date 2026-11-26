@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DrawingToolType } from './TopHeader.vue';
 import SegmentDrawing from './drawings/SegmentDrawing.vue';
 import RayDrawing from './drawings/RayDrawing.vue';
+import RectangleDrawing from './drawings/RectangleDrawing.vue';
 import {
 	DEFAULT_DRAWING_STYLE,
 	DRAWING_COLOR_PRESETS,
@@ -643,17 +644,9 @@ onBeforeUnmount(() => {
 					:x2="shape.x2" :end-x="shape.endX" :selected="selectedId === shape.item.id"
 					@shape-pointer-down="handleShapePointerDown" @right-handle-pointer-down="handleSegmentRightPointerDown" />
 
-				<template v-else>
-					<rect :x="shape.left" :y="shape.top" :width="shape.width" :height="shape.height" stroke="none"
-						:fill="shape.item.style.color" fill-opacity="0.14" />
-					<circle v-if="selectedId === shape.item.id" :cx="shape.left + shape.width" :cy="shape.top + shape.height / 2"
-						r="4" fill="#161616" :stroke="shape.item.style.color" stroke-width="2" class="cursor-ew-resize"
-						@pointerdown="handleRectRightEdgePointerDown($event, shape.item)" />
-					<text v-if="shape.item.style.label" :x="shape.left + shape.width - 6" :y="shape.top + shape.height / 2 + 4"
-						text-anchor="end" :fill="shape.item.style.color" class="select-none font-sans text-[11px] font-medium">
-						{{ shape.item.style.label }}
-					</text>
-				</template>
+				<RectangleDrawing v-else :item="shape.item" :left="shape.left" :top="shape.top" :width="shape.width"
+					:height="shape.height" :selected="selectedId === shape.item.id" @shape-pointer-down="handleShapePointerDown"
+					@right-handle-pointer-down="handleRectRightEdgePointerDown" />
 			</g>
 		</svg>
 	</div>
