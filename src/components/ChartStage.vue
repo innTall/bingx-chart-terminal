@@ -60,6 +60,7 @@ const containerRef = ref<HTMLDivElement | null>(null);
 const hoveredCandle = ref<Candle | null>(null);
 const chartRef = ref<IChartApi | null>(null);
 const seriesRef = ref<ISeriesApi<'Candlestick'> | null>(null);
+const drawingsOverlayRef = ref<InstanceType<typeof ChartDrawingsOverlay> | null>(null);
 
 let chart: IChartApi | null = null;
 let series: ISeriesApi<'Candlestick'> | null = null;
@@ -264,6 +265,10 @@ onMounted(() => {
 		}
 	});
 
+	chart.subscribeClick(() => {
+		drawingsOverlayRef.value?.clearSelection();
+	});
+
 	resizeObserver = new ResizeObserver((entries) => {
 		const entry = entries[0];
 		if (!entry || !chart) return;
@@ -339,8 +344,8 @@ onBeforeUnmount(() => {
 
 		<div ref="containerRef" class="h-full min-h-0 w-full flex-1" />
 
-		<ChartDrawingsOverlay :chart="chartRef" :series="seriesRef" :candles="candles" :symbol="symbol"
-			:active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+		<ChartDrawingsOverlay ref="drawingsOverlayRef" :chart="chartRef" :series="seriesRef" :candles="candles"
+			:symbol="symbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 			:active-preset="activePreset ?? null" @save-preset="emit('save-preset', $event)"
 			@update:drawings="emit('update:drawings', $event)" @clear-tool="emit('clear-tool')" />
 	</div>

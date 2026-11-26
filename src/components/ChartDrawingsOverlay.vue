@@ -66,6 +66,8 @@ type ComputedShape =
 		price: number;
 	};
 
+const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60
+
 const props = defineProps<{
 	chart: IChartApi | null;
 	series: ISeriesApi<'Candlestick'> | null;
@@ -116,14 +118,16 @@ function yToPrice(y: number): number | null {
 
 function timeToX(time: UTCTimestamp): number | null {
 	if (!props.chart) return null;
-	const x = props.chart.timeScale().timeToCoordinate(time);
+	const shiftedTime = (Number(time) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
+	const x = props.chart.timeScale().timeToCoordinate(shiftedTime);
 	return x !== null && Number.isFinite(x) ? x : null;
 }
 
 function xToTime(x: number): UTCTimestamp | null {
 	if (!props.chart) return null;
 	const t = props.chart.timeScale().coordinateToTime(x);
-	return t !== null ? (t as UTCTimestamp) : null;
+	if (t === null) return null;
+	return Math.max(0, Number(t) - UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
 }
 
 function getLocalCoords(event: PointerEvent): { x: number; y: number } | null {
@@ -140,7 +144,7 @@ function pickPoint(event: PointerEvent): PriceTimePoint | null {
 	const coords = getLocalCoords(event);
 	if (!coords) return null;
 
-	return resolvePointWithMagnet(coords.x, coords.y, {
+	const snapped = resolvePointWithMagnet(coords.x, coords.y, {
 		enabled: props.magnetEnabled,
 		candles: props.candles,
 		priceToY,
@@ -148,6 +152,22 @@ function pickPoint(event: PointerEvent): PriceTimePoint | null {
 		timeToX,
 		xToTime,
 	});
+	if (snapped) return snapped;
+
+	const rawPrice = yToPrice(coords.y);
+	if (rawPrice === null || !Number.isFinite(rawPrice)) return null;
+
+	const rawTime = xToTime(coords.x);
+	if (rawTime !== null) {
+		return { time: rawTime, price: rawPrice };
+	}
+
+	const lastCandle = props.candles[props.candles.length - 1];
+	if (lastCandle) {
+		return { time: lastCandle.time as UTCTimestamp, price: rawPrice };
+	}
+
+	return null;
 }
 
 function buildInitialStyle(kind: DrawingKind): DrawingObject['style'] {
@@ -168,6 +188,8 @@ function commitDrawings(next: DrawingObject[]) {
 
 function handleOverlayPointerDown(event: PointerEvent) {
 	if (event.button !== 0) return;
+	if (props.activeTool === 'none') return;
+
 	const point = pickPoint(event);
 	if (!point) return;
 
@@ -446,6 +468,14 @@ function deleteSelected() {
 	commitDrawings(props.drawings.filter((d) => d.id !== id));
 }
 
+function clearSelection() {
+	selectedId.value = null;
+}
+
+defineExpose({
+	clearSelection,
+});
+
 const computedShapes = computed<ComputedShape[]>(() => {
 	void renderTick.value;
 	void props.candles.length;
@@ -545,12 +575,12 @@ onBeforeUnmount(() => {
 			<div class="flex items-center gap-1">
 				<button v-for="hex in DRAWING_COLOR_PRESETS" :key="hex" type="button"
 					class="h-4 w-4 rounded-full border transition" :class="selectedDrawing.style.color === hex
-							? 'scale-110 border-white'
-							: 'border-slate-600 opacity-80 hover:opacity-100'
+						? 'scale-110 border-white'
+						: 'border-slate-600 opacity-80 hover:opacity-100'
 						" :style="{ backgroundColor: hex }" @click="updateSelectedStyle({ color: hex })" />
 			</div>
 
-			<select :value="selectedDrawing.style.lineWidth" aria-label="Толщина линии"
+			<select :value="selectedDrawing.style.lineWidth" aria-label="Line width"
 				class="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 font-mono text-[11px] text-slate-200"
 				@change="updateSelectedStyle({ lineWidth: Number(($event.target as HTMLSelectElement).value) })">
 				<option v-for="w in DRAWING_WIDTH_PRESETS" :key="w" :value="w">
@@ -558,17 +588,17 @@ onBeforeUnmount(() => {
 				</option>
 			</select>
 
-			<input type="text" :value="selectedDrawing.style.label" placeholder="Метка..." maxlength="60"
+			<input type="text" :value="selectedDrawing.style.label" placeholder="Label..." maxlength="60"
 				class="w-32 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
 				@input="updateSelectedStyle({ label: ($event.target as HTMLInputElement).value })" />
 
-			<button type="button" title="Сохранить настройки в пресет"
+			<button type="button" title="Save as preset"
 				class="rounded p-1 text-amber-300 transition hover:bg-amber-950/50 hover:text-amber-200"
 				@click="saveSelectedAsPreset">
 				<BookmarkPlus class="h-3.5 w-3.5" />
 			</button>
 
-			<button type="button" title="Удалить элемент"
+			<button type="button" title="Delete drawing"
 				class="rounded p-1 text-rose-400 transition hover:bg-rose-950/60 hover:text-rose-300" @click="deleteSelected">
 				<Trash2 class="h-3.5 w-3.5" />
 			</button>

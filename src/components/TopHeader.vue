@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { Magnet, Minus, Spline, Square, X } from 'lucide-vue-next';
+import { ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
 
 export type DataSourceType = 'bingx' | 'oanda';
 export type DrawingToolType = 'none' | 'segment' | 'ray' | 'rectangle';
+
+const TOOL_CONFIG: ReadonlyArray<{
+	kind: DrawingKind;
+	label: string;
+	draftTitle: string;
+	icon: typeof Spline;
+}> = [
+		{ kind: 'segment', label: 'Segment', draftTitle: 'New draft Segment', icon: Spline },
+		{ kind: 'ray', label: 'Ray', draftTitle: 'New draft Ray', icon: Minus },
+		{ kind: 'rectangle', label: 'Rectangle', draftTitle: 'New draft Rectangle', icon: Square },
+	];
 
 const props = defineProps<{
 	activeSymbolLabel: string;
@@ -26,6 +38,9 @@ const emit = defineEmits<{
 	(e: 'toggle-magnet'): void;
 }>();
 
+const toolbarRef = ref<HTMLElement | null>(null);
+const openMenuKind = ref<DrawingKind | null>(null);
+
 function presetsByKind(kind: DrawingKind): DrawingPreset[] {
 	return props.presets.filter((p) => p.kind === kind);
 }
@@ -35,26 +50,41 @@ function selectedPresetForKind(kind: DrawingKind): DrawingPreset | null {
 	return props.presets.find((p) => p.id === props.activePresetId && p.kind === kind) ?? null;
 }
 
-function handleDraftClick(current: DrawingToolType, target: Exclude<DrawingToolType, 'none'>) {
-	// Клик по кнопке создаёт дефолтный (черновой) элемент без выбранного пресета
+function handleDraftClick(target: DrawingKind) {
+	openMenuKind.value = null;
 	emit('select-preset', null);
-	if (current === target && props.activePresetId === null) {
+	if (props.activeTool === target && props.activePresetId === null) {
 		emit('select-tool', 'none');
 		return;
 	}
 	emit('select-tool', target);
 }
 
-function handlePresetChange(kind: DrawingKind, event: Event) {
-	const id = (event.target as HTMLSelectElement).value;
-	if (!id) {
-		emit('select-preset', null);
-		return;
-	}
-	const found = props.presets.find((p) => p.id === id && p.kind === kind) ?? null;
-	emit('select-preset', found);
-	emit('select-tool', kind);
+function togglePresetMenu(kind: DrawingKind) {
+	openMenuKind.value = openMenuKind.value === kind ? null : kind;
 }
+
+function handlePickPreset(preset: DrawingPreset) {
+	openMenuKind.value = null;
+	emit('select-preset', preset);
+	emit('select-tool', preset.kind);
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+	if (!openMenuKind.value) return;
+	const root = toolbarRef.value;
+	if (root && event.target instanceof Node && !root.contains(event.target)) {
+		openMenuKind.value = null;
+	}
+}
+
+onMounted(() => {
+	document.addEventListener('pointerdown', handleDocumentPointerDown);
+});
+
+onBeforeUnmount(() => {
+	document.removeEventListener('pointerdown', handleDocumentPointerDown);
+});
 </script>
 
 <template>
@@ -82,7 +112,7 @@ function handlePresetChange(kind: DrawingKind, event: Event) {
 			</span>
 		</div>
 
-		<!-- Центральная зона: источник данных, инструменты разметки со встроенными пресетами и магнит -->
+		<!-- Центральная зона: источник данных, компактные split-кнопки элементов с пресетами и магнит -->
 		<div class="flex items-center gap-2.5">
 			<div class="flex items-center rounded border border-slate-800 bg-[#161616] p-0.5 text-xs">
 				<button type="button" class="rounded px-2.5 py-1 font-medium transition" :class="activeSource === 'bingx'
@@ -99,85 +129,53 @@ function handlePresetChange(kind: DrawingKind, event: Event) {
 				</button>
 			</div>
 
-			<div class="flex items-center gap-1.5 rounded border border-slate-800 bg-[#161616] px-1.5 py-0.5 text-xs">
-				<!-- Segment: кнопка черновика + встроенный список пресетов -->
-				<div class="flex items-center rounded bg-neutral-900 transition"
-					:class="activeTool === 'segment' ? 'ring-1 ring-amber-500/50' : ''">
-					<button type="button" title="New draft Segment"
-						class="flex items-center gap-1 rounded-l px-2 py-1 font-medium transition" :class="activeTool === 'segment'
-							? 'bg-amber-500/20 text-amber-300'
-							: 'text-slate-300 hover:bg-neutral-800'
-							" @click="handleDraftClick(activeTool, 'segment')">
-						<Spline class="h-3.5 w-3.5" />
-						<span>Segment</span>
-					</button>
-					<select :value="selectedPresetForKind('segment')?.id ?? ''" aria-label="Segment presets"
-						style="max-width: 88px"
-						class="rounded-r border-l border-neutral-800 bg-transparent px-1 py-1 text-[11px] text-slate-300 focus:outline-none"
-						@change="handlePresetChange('segment', $event)">
-						<option value="" class="bg-[#161616]">Preset</option>
-						<option v-for="p in presetsByKind('segment')" :key="p.id" :value="p.id" class="bg-[#161616]">
-							{{ p.name }}
-						</option>
-					</select>
-					<button v-if="selectedPresetForKind('segment')" type="button" title="Delete selected Segment preset"
-						class="pr-1.5 text-neutral-400 transition hover:text-rose-400"
-						@click.stop="emit('delete-preset', selectedPresetForKind('segment')!.id)">
-						<X class="h-3 w-3" />
-					</button>
-				</div>
+			<div ref="toolbarRef"
+				class="flex items-center gap-1.5 rounded border border-slate-800 bg-[#161616] px-1.5 py-0.5 text-xs">
+				<div v-for="tool in TOOL_CONFIG" :key="tool.kind" class="relative">
+					<div class="flex items-center rounded bg-neutral-900 transition"
+						:class="activeTool === tool.kind ? 'ring-1 ring-amber-500/50' : ''">
+						<button type="button" :title="tool.draftTitle"
+							class="flex items-center gap-1.5 rounded-l px-2 py-1 font-medium transition" :class="activeTool === tool.kind
+								? 'bg-amber-500/20 text-amber-300'
+								: 'text-slate-300 hover:bg-neutral-800'
+								" @click="handleDraftClick(tool.kind)">
+							<component :is="tool.icon" class="h-3.5 w-3.5" />
+							<span>{{ selectedPresetForKind(tool.kind)?.name ?? tool.label }}</span>
+						</button>
 
-				<!-- Ray: кнопка черновика + встроенный список пресетов -->
-				<div class="flex items-center rounded bg-neutral-900 transition"
-					:class="activeTool === 'ray' ? 'ring-1 ring-amber-500/50' : ''">
-					<button type="button" title="New draft Ray"
-						class="flex items-center gap-1 rounded-l px-2 py-1 font-medium transition" :class="activeTool === 'ray'
-							? 'bg-amber-500/20 text-amber-300'
-							: 'text-slate-300 hover:bg-neutral-800'
-							" @click="handleDraftClick(activeTool, 'ray')">
-						<Minus class="h-3.5 w-3.5" />
-						<span>Ray</span>
-					</button>
-					<select :value="selectedPresetForKind('ray')?.id ?? ''" aria-label="Ray presets" style="max-width: 88px"
-						class="rounded-r border-l border-neutral-800 bg-transparent px-1 py-1 text-[11px] text-slate-300 focus:outline-none"
-						@change="handlePresetChange('ray', $event)">
-						<option value="" class="bg-[#161616]">Preset</option>
-						<option v-for="p in presetsByKind('ray')" :key="p.id" :value="p.id" class="bg-[#161616]">
-							{{ p.name }}
-						</option>
-					</select>
-					<button v-if="selectedPresetForKind('ray')" type="button" title="Delete selected Ray preset"
-						class="pr-1.5 text-neutral-400 transition hover:text-rose-400"
-						@click.stop="emit('delete-preset', selectedPresetForKind('ray')!.id)">
-						<X class="h-3 w-3" />
-					</button>
-				</div>
+						<button type="button" :title="`${tool.label} presets`" :aria-expanded="openMenuKind === tool.kind"
+							class="flex items-center rounded-r border-l border-neutral-800 px-1 py-1 text-slate-400 transition hover:bg-neutral-800 hover:text-slate-200"
+							:class="openMenuKind === tool.kind ? 'bg-neutral-800 text-slate-100' : ''"
+							@click.stop="togglePresetMenu(tool.kind)">
+							<ChevronDown class="h-3.5 w-3.5 transition-transform"
+								:class="openMenuKind === tool.kind ? 'rotate-180' : ''" />
+						</button>
+					</div>
 
-				<!-- Rectangle: кнопка черновика + встроенный список пресетов -->
-				<div class="flex items-center rounded bg-neutral-900 transition"
-					:class="activeTool === 'rectangle' ? 'ring-1 ring-amber-500/50' : ''">
-					<button type="button" title="New draft Rectangle"
-						class="flex items-center gap-1 rounded-l px-2 py-1 font-medium transition" :class="activeTool === 'rectangle'
-							? 'bg-amber-500/20 text-amber-300'
-							: 'text-slate-300 hover:bg-neutral-800'
-							" @click="handleDraftClick(activeTool, 'rectangle')">
-						<Square class="h-3.5 w-3.5" />
-						<span>Rectangle</span>
-					</button>
-					<select :value="selectedPresetForKind('rectangle')?.id ?? ''" aria-label="Rectangle presets"
-						style="max-width: 88px"
-						class="rounded-r border-l border-neutral-800 bg-transparent px-1 py-1 text-[11px] text-slate-300 focus:outline-none"
-						@change="handlePresetChange('rectangle', $event)">
-						<option value="" class="bg-[#161616]">Preset</option>
-						<option v-for="p in presetsByKind('rectangle')" :key="p.id" :value="p.id" class="bg-[#161616]">
-							{{ p.name }}
-						</option>
-					</select>
-					<button v-if="selectedPresetForKind('rectangle')" type="button" title="Delete selected Rectangle preset"
-						class="pr-1.5 text-neutral-400 transition hover:text-rose-400"
-						@click.stop="emit('delete-preset', selectedPresetForKind('rectangle')!.id)">
-						<X class="h-3 w-3" />
-					</button>
+					<!-- Выпадающий список пресетов -->
+					<div v-if="openMenuKind === tool.kind"
+						class="absolute left-0 top-full z-30 mt-1.5 min-w-42 rounded border border-slate-700 bg-[#161616] py-1 shadow-lg">
+						<div v-if="presetsByKind(tool.kind).length === 0" class="px-2.5 py-1.5 text-[11px] text-slate-500">
+							No saved presets
+						</div>
+
+						<div v-for="p in presetsByKind(tool.kind)" :key="p.id"
+							class="flex items-center justify-between gap-2 px-2 py-1 text-xs transition hover:bg-neutral-800/90"
+							:class="activePresetId === p.id ? 'bg-amber-500/15 text-amber-200' : 'text-slate-200'">
+							<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-left"
+								@click="handlePickPreset(p)">
+								<span class="h-2.5 w-2.5 shrink-0 rounded-full border border-white/20"
+									:style="{ backgroundColor: p.color }" />
+								<span class="truncate">{{ p.name }}</span>
+							</button>
+
+							<button type="button" title="Delete preset"
+								class="shrink-0 rounded p-0.5 text-slate-500 transition hover:bg-rose-950/60 hover:text-rose-400"
+								@click.stop="emit('delete-preset', p.id)">
+								<Trash2 class="h-3 w-3" />
+							</button>
+						</div>
+					</div>
 				</div>
 
 				<span class="mx-0.5 h-4 w-px bg-slate-800" />

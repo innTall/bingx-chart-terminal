@@ -21,7 +21,7 @@ import {
 } from '../services/bingx/tickers';
 import {
 	loadDrawingsForSymbol,
-	scheduleDrawingsSave,
+	saveDrawingsForSymbol,
 } from '../services/storage/drawingsStorage';
 import {
 	deleteDrawingPreset,
@@ -59,7 +59,6 @@ const contractError = ref<string | null>(null);
 const activeSymbolLabel = computed(() => toDisplaySymbol(activeSymbol.value));
 
 let klinesRequestSeq = 0;
-let drawingsLoadSeq = 0;
 let activeAbortController: AbortController | null = null;
 let liveSub: LiveKlineSubscription | null = null;
 let pricesTimerId: number | null = null;
@@ -72,16 +71,13 @@ function applySymbolPrice(symbol: string, price: number) {
 }
 
 async function loadDrawings(symbol: string) {
-	const seq = ++drawingsLoadSeq;
-	const loaded = await loadDrawingsForSymbol(symbol);
-	if (seq !== drawingsLoadSeq || symbol !== activeSymbol.value) return;
-	drawings.value = loaded;
+	drawings.value = loadDrawingsForSymbol(symbol);
 }
 
 function handleDrawingsUpdate(nextItems: DrawingObject[]) {
 	const symbolKey = activeSymbol.value;
 	drawings.value = nextItems;
-	scheduleDrawingsSave(symbolKey, nextItems);
+	saveDrawingsForSymbol(symbolKey, nextItems);
 }
 
 function handleSavePreset(drawing: DrawingObject) {
@@ -220,7 +216,7 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 
 onMounted(() => {
 	void loadContracts();
-	void loadDrawings(activeSymbol.value);
+	loadDrawings(activeSymbol.value);
 	void loadCandles(activeSymbol.value, activeTimeframe.value);
 	void refreshWatchlistPrices();
 
@@ -231,7 +227,8 @@ onMounted(() => {
 
 watch(activeSymbol, (nextSymbol) => {
 	activeTool.value = 'none';
-	void loadDrawings(nextSymbol);
+	drawings.value = [];
+	loadDrawings(nextSymbol);
 });
 
 watch([activeSymbol, activeTimeframe], ([nextSymbol, nextTf]) => {
