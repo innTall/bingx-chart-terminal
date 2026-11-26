@@ -38,6 +38,7 @@ import {
 import type { PriceAlert, TriggeredAlertEvent } from '../types/alerts';
 import type { DrawingObject, DrawingPreset } from '../types/drawings';
 import type { Candle } from '../types/market';
+import { sendScreenshotToTelegram } from '../services/telegram/sendScreenshot';
 
 const symbols = ref<MarketSymbolItem[]>(
 	WATCHLIST_SYMBOLS.map((sym) => ({
@@ -68,6 +69,11 @@ const candleError = ref<string | null>(null);
 const contractError = ref<string | null>(null);
 
 const activeSymbolLabel = computed(() => toDisplaySymbol(activeSymbol.value));
+
+const chartStageRef = ref<InstanceType<typeof ChartStage> | null>(null);
+const capturingScreenshot = ref<boolean>(false);
+const screenshotToast = ref<{ ok: boolean; text: string } | null>(null);
+let toastTimerId: number | null = null;
 
 let klinesRequestSeq = 0;
 let activeAbortController: AbortController | null = null;
@@ -336,6 +342,45 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 	}
 }
 
+function showScreenshotToast(ok: boolean, text: string) {
+	screenshotToast.value = { ok, text };
+	if (toastTimerId !== null) {
+		window.clearTimeout(toastTimerId);
+	}
+	toastTimerId = window.setTimeout(() => {
+		screenshotToast.value = null;
+		toastTimerId = null;
+	}, 3500);
+}
+
+async function handleCaptureScreenshot() {
+	if (capturingScreenshot.value || !chartStageRef.value) return;
+	capturingScreenshot.value = true;
+	try {
+		const blob = await chartStageRef.value.captureScreenshot();
+		const res = await sendScreenshotToTelegram({
+			blob,
+			symbol: activeSymbol.value,
+			timeframe: activeTimeframe.value,
+			source: activeSource.value,
+			lastPrice: latestCandle.value?.close ?? null,
+		});
+
+		if (res.ok) {
+			showScreenshotToast(true, 'Sent to Telegram');
+		} else {
+			showScreenshotToast(false, res.error ?? 'Failed to send screenshot');
+		}
+	} catch (err) {
+		showScreenshotToast(
+			false,
+			err instanceof Error ? err.message : 'Screenshot error'
+		);
+	} finally {
+		capturingScreenshot.value = false;
+	}
+}
+
 onMounted(() => {
 	void loadContracts();
 	loadDrawings(activeSymbol.value);
@@ -380,11 +425,20 @@ onBeforeUnmount(() => {
 			:active-preset-id="activePreset?.id ?? null" @select-timeframe="activeTimeframe = $event"
 			@select-source="activeSource = $event" @select-tool="alertPlacing = false; activeTool = $event"
 			@select-preset="activePreset = $event" @delete-preset="handleDeletePreset"
-			@toggle-magnet="magnetEnabled = !magnetEnabled" @toggle-alert-placing="handleToggleAlertPlacing" />
+			@toggle-magnet="magnetEnabled = !magnetEnabled" @toggle-alert-placing="handleToggleAlertPlacing" 
+			:capturing-screenshot="capturingScreenshot" @capture-screenshot="handleCaptureScreenshot" />
+
+		<div v-if="screenshotToast"
+			class="fixed bottom-4 right-4 z-50 rounded border px-3 py-1.5 font-mono text-xs shadow-lg" :class="screenshotToast.ok
+					? 'border-emerald-500/50 bg-[#161616]/95 text-emerald-300'
+					: 'border-rose-500/50 bg-[#161616]/95 text-rose-300'
+				">
+			{{ screenshotToast.text }}
+		</div>
 
 		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
 			<section class="flex h-full min-h-0 flex-col">
-				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
+				<ChartStage ref="chartStageRef" :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
 					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 					:active-preset="activePreset" :alerts="alerts" :alert-placing="alertPlacing" @save-preset="handleSavePreset"
 					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" @create-alert="handleCreateAlert"

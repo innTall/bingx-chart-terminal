@@ -18,6 +18,7 @@ import ChartDrawingsOverlay from './ChartDrawingsOverlay.vue';
 import type { DrawingToolType } from './TopHeader.vue';
 import type { PriceAlert } from '../types/alerts';
 import ChartAlertsOverlay from './ChartAlertsOverlay.vue';
+import { captureChartAreaBlob, type AlertBadgeSnapshot } from '../utils/captureChart';
 
 interface VisibleBounds {
 	minLow: number;
@@ -26,6 +27,7 @@ interface VisibleBounds {
 
 // Смещение времени графика в UTC+2 (в секундах)
 const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60;
+const stageRef = ref<HTMLDivElement | null>(null);
 
 // Настройки вертикального заполнения поля графика (удобно менять под свой глаз)
 const VERTICAL_SCALE_CONFIG = {
@@ -234,6 +236,34 @@ function formatPrice(val: number): string {
 	return Number.isFinite(val) ? String(val) : '—';
 }
 
+async function captureScreenshot(): Promise<Blob> {
+	const badges: AlertBadgeSnapshot[] = [];
+	const currentSeries = seriesRef.value;
+
+	if (currentSeries) {
+		for (const alert of props.alerts) {
+			if (alert.symbol.toUpperCase() !== props.symbol.toUpperCase()) continue;
+			const y = currentSeries.priceToCoordinate(alert.price);
+			if (y !== null && Number.isFinite(y)) {
+				badges.push({
+					y,
+					text: String(alert.price),
+					active: alert.active,
+				});
+			}
+		}
+	}
+
+	return captureChartAreaBlob({
+		stageEl: stageRef.value,
+		alertBadges: badges,
+	});
+}
+
+defineExpose({
+	captureScreenshot,
+});
+
 onMounted(() => {
 	if (!containerRef.value) return;
 
@@ -384,7 +414,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div
+	<div ref="stageRef"
 		class="relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded border border-slate-800 bg-[#161616]">
 		<div v-if="hoveredCandle"
 			class="pointer-events-none absolute left-2.5 top-2 z-20 flex flex-wrap items-center gap-2 rounded bg-[#161616]/85 px-2 py-1 font-mono text-[11px] text-slate-300">

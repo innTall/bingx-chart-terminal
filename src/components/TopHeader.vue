@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
+import { Camera, Bell, ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
@@ -28,6 +28,7 @@ const props = defineProps<{
 	presets: readonly DrawingPreset[];
 	activePresetId: string | null;
 	alertPlacing: boolean;
+	capturingScreenshot?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -38,6 +39,7 @@ const emit = defineEmits<{
 	(e: 'delete-preset', presetId: string): void;
 	(e: 'toggle-magnet'): void;
 	(e: 'toggle-alert-placing'): void;
+	(e: 'capture-screenshot'): void;
 }>();
 
 const toolbarRef = ref<HTMLElement | null>(null);
@@ -196,6 +198,13 @@ onBeforeUnmount(() => {
 							: 'border-slate-700/80 bg-neutral-900/80 text-slate-400 hover:border-slate-600 hover:bg-neutral-800 hover:text-slate-200'
 						" @click="emit('toggle-alert-placing')">
 					<Bell class="h-3.5 w-3.5" />
+				</button>
+
+				<button type="button" title="Send chart screenshot to Telegram" aria-label="Send chart screenshot to Telegram"
+					:disabled="capturingScreenshot"
+					class="flex items-center justify-center rounded border border-slate-700/80 bg-neutral-900/80 px-2 py-1 text-slate-400 transition hover:border-slate-600 hover:bg-neutral-800 hover:text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+					@click="emit('capture-screenshot')">
+					<Camera class="h-3.5 w-3.5" :class="capturingScreenshot ? 'animate-pulse text-sky-300' : ''" />	
 				</button>
 			</div>
 		</div>
