@@ -16,6 +16,8 @@ import type { Candle } from '../types/market';
 import { loadSavedBarSpacing, saveBarSpacing } from '../services/storage/terminalStorage';
 import ChartDrawingsOverlay from './ChartDrawingsOverlay.vue';
 import type { DrawingToolType } from './TopHeader.vue';
+import type { PriceAlert } from '../types/alerts';
+import ChartAlertsOverlay from './ChartAlertsOverlay.vue';
 
 interface VisibleBounds {
 	minLow: number;
@@ -80,12 +82,18 @@ const props = defineProps<{
 	magnetEnabled: boolean;
 	drawings: readonly DrawingObject[];
 	activePreset?: DrawingPreset | null;
+	alerts: readonly PriceAlert[];
+	alertPlacing: boolean;
 }>();
 
 const emit = defineEmits<{
 	(e: 'update:drawings', items: DrawingObject[]): void;
 	(e: 'clear-tool'): void;
 	(e: 'save-preset', drawing: DrawingObject): void;
+	(e: 'create-alert', price: number): void;
+	(e: 'update-alert-price', payload: { id: string; price: number }): void;
+	(e: 'delete-alert', id: string): void;
+	(e: 'clear-alert-placing'): void;
 }>();
 
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -402,5 +410,10 @@ onBeforeUnmount(() => {
 			:symbol="symbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 			:active-preset="activePreset ?? null" @save-preset="emit('save-preset', $event)"
 			@update:drawings="emit('update:drawings', $event)" @clear-tool="emit('clear-tool')" />
+	
+		<ChartAlertsOverlay :chart="chartRef" :series="seriesRef" :symbol="symbol" :alerts="alerts"
+			:alert-placing="alertPlacing" @create-alert="emit('create-alert', $event)"
+			@update-alert-price="emit('update-alert-price', $event)" @delete-alert="emit('delete-alert', $event)"
+			@clear-alert-placing="emit('clear-alert-placing')" />	
 	</div>
 </template>

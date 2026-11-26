@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
+import { Bell, ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
@@ -27,6 +27,7 @@ const props = defineProps<{
 	contractError: string | null;
 	presets: readonly DrawingPreset[];
 	activePresetId: string | null;
+	alertPlacing: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 	(e: 'select-preset', preset: DrawingPreset | null): void;
 	(e: 'delete-preset', presetId: string): void;
 	(e: 'toggle-magnet'): void;
+	(e: 'toggle-alert-placing'): void;
 }>();
 
 const toolbarRef = ref<HTMLElement | null>(null);
@@ -186,6 +188,14 @@ onBeforeUnmount(() => {
 						: 'text-slate-400 hover:bg-neutral-800 hover:text-slate-200'
 						" @click="emit('toggle-magnet')">
 					<Magnet class="h-3.5 w-3.5" />
+				</button>
+
+				<button type="button" title="Place price alert" aria-label="Place price alert" :aria-pressed="alertPlacing"
+					class="flex items-center justify-center rounded border px-2 py-1 transition" :class="alertPlacing
+							? 'border-amber-400/70 bg-amber-500/20 text-amber-300'
+							: 'border-slate-700/80 bg-neutral-900/80 text-slate-400 hover:border-slate-600 hover:bg-neutral-800 hover:text-slate-200'
+						" @click="emit('toggle-alert-placing')">
+					<Bell class="h-3.5 w-3.5" />
 				</button>
 			</div>
 		</div>

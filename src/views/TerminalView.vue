@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import AlertTriggeredModal from '../components/AlertTriggeredModal.vue';
 import BottomFooter from '../components/BottomFooter.vue';
 import ChartStage from '../components/ChartStage.vue';
 import TopHeader, {
@@ -20,6 +21,11 @@ import {
 	type MarketSymbolItem,
 } from '../services/bingx/tickers';
 import {
+	loadAlertsForSymbol,
+	saveAlertsForSymbol,
+} from '../services/storage/alertsStorage';
+import { playAlertSound } from '../utils/alertSound';
+import {
 	loadDrawingsForSymbol,
 	saveDrawingsForSymbol,
 } from '../services/storage/drawingsStorage';
@@ -29,6 +35,7 @@ import {
 	loadDrawingPresets,
 	saveDrawingPresets,
 } from '../services/storage/presetsStorage';
+import type { PriceAlert, TriggeredAlertEvent } from '../types/alerts';
 import type { DrawingObject, DrawingPreset } from '../types/drawings';
 import type { Candle } from '../types/market';
 
@@ -50,6 +57,10 @@ const presets = ref<DrawingPreset[]>(loadDrawingPresets());
 const activePreset = ref<DrawingPreset | null>(null);
 
 const drawings = ref<DrawingObject[]>([]);
+const alerts = ref<PriceAlert[]>([]);
+const alertPlacing = ref<boolean>(false);
+const triggeredAlert = ref<TriggeredAlertEvent | null>(null);
+
 const candles = ref<Candle[]>([]);
 const latestCandle = ref<Candle | null>(null);
 const loadingCandles = ref<boolean>(false);
@@ -62,6 +73,7 @@ let klinesRequestSeq = 0;
 let activeAbortController: AbortController | null = null;
 let liveSub: LiveKlineSubscription | null = null;
 let pricesTimerId: number | null = null;
+let prevTrackedPrice: number | null = null;
 
 function applySymbolPrice(symbol: string, price: number) {
 	const upper = symbol.toUpperCase();
@@ -70,7 +82,7 @@ function applySymbolPrice(symbol: string, price: number) {
 	);
 }
 
-async function loadDrawings(symbol: string) {
+function loadDrawings(symbol: string) {
 	drawings.value = loadDrawingsForSymbol(symbol);
 }
 
@@ -78,6 +90,114 @@ function handleDrawingsUpdate(nextItems: DrawingObject[]) {
 	const symbolKey = activeSymbol.value;
 	drawings.value = nextItems;
 	saveDrawingsForSymbol(symbolKey, nextItems);
+}
+
+function loadAlerts(symbol: string) {
+	alerts.value = loadAlertsForSymbol(symbol);
+}
+
+function syncAlerts(nextItems: PriceAlert[]) {
+	const symbolKey = activeSymbol.value;
+	alerts.value = nextItems;
+	saveAlertsForSymbol(symbolKey, nextItems);
+}
+
+function handleToggleAlertPlacing() {
+	activeTool.value = 'none';
+	activePreset.value = null;
+	alertPlacing.value = !alertPlacing.value;
+}
+
+function resolvePriceDecimals(refPrice: number | null | undefined): number {
+	if (typeof refPrice !== 'number' || !Number.isFinite(refPrice) || refPrice <= 0) {
+		return 4;
+	}
+	const str = String(refPrice);
+	const dotIdx = str.indexOf('.');
+	if (dotIdx === -1) return 2;
+	return Math.min(6, Math.max(2, str.length - dotIdx - 1));
+}
+
+function normalizeAlertPrice(price: number, refPrice?: number | null): number {
+	const decimals = resolvePriceDecimals(refPrice ?? latestCandle.value?.close);
+	return Number(price.toFixed(decimals));
+}
+
+function handleCreateAlert(price: number) {
+	if (!Number.isFinite(price) || price <= 0) return;
+	const cleanPrice = normalizeAlertPrice(price);
+	const created: PriceAlert = {
+		id: `alert_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+		symbol: activeSymbol.value,
+		price: cleanPrice,
+		active: true,
+		createdAt: Date.now(),
+	};
+	syncAlerts([...alerts.value, created]);
+}
+
+function handleUpdateAlertPrice(payload: { id: string; price: number }) {
+	if (!Number.isFinite(payload.price) || payload.price <= 0) return;
+	const cleanPrice = normalizeAlertPrice(payload.price);
+	const next = alerts.value.map((item) =>
+		item.id === payload.id
+			? { ...item, price: cleanPrice, active: true, triggeredAt: undefined }
+			: item
+	);
+	syncAlerts(next);
+}
+
+function handleDeleteAlert(id: string) {
+	syncAlerts(alerts.value.filter((item) => item.id !== id));
+}
+
+function checkAlertsCrossing(nextPrice: number) {
+	if (!Number.isFinite(nextPrice)) return;
+
+	if (prevTrackedPrice === null) {
+		prevTrackedPrice = nextPrice;
+		return;
+	}
+
+	const prevPrice = prevTrackedPrice;
+	prevTrackedPrice = nextPrice;
+	if (prevPrice === nextPrice) return;
+
+	let hasTriggered = false;
+	const now = Date.now();
+
+	const updated = alerts.value.map((item) => {
+		if (!item.active) return item;
+
+		const crossedUp = prevPrice < item.price && nextPrice >= item.price;
+		const crossedDown = prevPrice > item.price && nextPrice <= item.price;
+
+		if (!crossedUp && !crossedDown) return item;
+
+		hasTriggered = true;
+		const finishedAlert: PriceAlert = {
+			...item,
+			active: false,
+			triggeredAt: now,
+		};
+
+		if (!triggeredAlert.value) {
+			triggeredAlert.value = {
+				alert: finishedAlert,
+				prevPrice,
+				currentPrice: nextPrice,
+				direction: crossedUp ? 'up' : 'down',
+				occurredAt: now,
+			};
+			playAlertSound();
+		}
+
+		return finishedAlert;
+	});
+
+	if (hasTriggered) {
+		syncAlerts(updated);
+	}
 }
 
 function handleSavePreset(drawing: DrawingObject) {
@@ -143,6 +263,7 @@ function restartLiveStream(symbol: string, timeframe: Timeframe) {
 			if (symbol !== activeSymbol.value || timeframe !== activeTimeframe.value) return;
 			latestCandle.value = candle;
 			applySymbolPrice(symbol, candle.close);
+			checkAlertsCrossing(candle.close);
 
 			const current = candles.value;
 			if (current.length === 0) {
@@ -199,6 +320,7 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 		if (last) {
 			latestCandle.value = last;
 			applySymbolPrice(symbol, last.close);
+			checkAlertsCrossing(last.close);
 		}
 
 		restartLiveStream(symbol, interval);
@@ -217,6 +339,7 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 onMounted(() => {
 	void loadContracts();
 	loadDrawings(activeSymbol.value);
+	loadAlerts(activeSymbol.value);
 	void loadCandles(activeSymbol.value, activeTimeframe.value);
 	void refreshWatchlistPrices();
 
@@ -227,8 +350,12 @@ onMounted(() => {
 
 watch(activeSymbol, (nextSymbol) => {
 	activeTool.value = 'none';
+	alertPlacing.value = false;
+	prevTrackedPrice = null;
 	drawings.value = [];
+	alerts.value = [];
 	loadDrawings(nextSymbol);
+	loadAlerts(nextSymbol);
 });
 
 watch([activeSymbol, activeTimeframe], ([nextSymbol, nextTf]) => {
@@ -249,17 +376,20 @@ onBeforeUnmount(() => {
 	<div class="flex h-screen flex-col gap-2 overflow-hidden bg-[#161616] p-2.5 text-slate-100">
 		<TopHeader :active-symbol-label="activeSymbolLabel" :active-timeframe="activeTimeframe"
 			:active-source="activeSource" :active-tool="activeTool" :magnet-enabled="magnetEnabled"
-			:contract-error="contractError" :presets="presets" :active-preset-id="activePreset?.id ?? null"
-			@select-timeframe="activeTimeframe = $event" @select-source="activeSource = $event"
-			@select-tool="activeTool = $event" @select-preset="activePreset = $event" @delete-preset="handleDeletePreset"
-			@toggle-magnet="magnetEnabled = !magnetEnabled" />
+			:alert-placing="alertPlacing" :contract-error="contractError" :presets="presets"
+			:active-preset-id="activePreset?.id ?? null" @select-timeframe="activeTimeframe = $event"
+			@select-source="activeSource = $event" @select-tool="alertPlacing = false; activeTool = $event"
+			@select-preset="activePreset = $event" @delete-preset="handleDeletePreset"
+			@toggle-magnet="magnetEnabled = !magnetEnabled" @toggle-alert-placing="handleToggleAlertPlacing" />
 
 		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
 			<section class="flex h-full min-h-0 flex-col">
 				<ChartStage :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
 					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
-					:active-preset="activePreset" @save-preset="handleSavePreset" @update:drawings="handleDrawingsUpdate"
-					@clear-tool="activeTool = 'none'" />
+					:active-preset="activePreset" :alerts="alerts" :alert-placing="alertPlacing" @save-preset="handleSavePreset"
+					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" @create-alert="handleCreateAlert"
+					@update-alert-price="handleUpdateAlertPrice" @delete-alert="handleDeleteAlert"
+					@clear-alert-placing="alertPlacing = false" />
 			</section>
 
 			<WatchlistPanel class="h-full min-h-0" :items="symbols" :active-symbol="activeSymbol"
@@ -267,5 +397,7 @@ onBeforeUnmount(() => {
 		</main>
 
 		<BottomFooter />
+
+		<AlertTriggeredModal :event="triggeredAlert" @close="triggeredAlert = null" />
 	</div>
 </template>
