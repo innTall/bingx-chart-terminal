@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { Trash2 } from 'lucide-vue-next';
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { PriceAlert } from '../types/alerts';
+import {
+	coordinateToChartTime,
+	coordinateToPrice,
+	priceToCoordinate,
+} from '../utils/chartCoordinates';
 
 interface RenderedAlert {
 	alert: PriceAlert;
@@ -39,15 +44,12 @@ function bumpRender() {
 }
 
 function priceToY(price: number): number | null {
-	if (!props.series) return null;
-	const y = props.series.priceToCoordinate(price);
-	return y !== null && Number.isFinite(y) ? y : null;
+	return priceToCoordinate(props.series, price);
 }
 
 function yToPrice(y: number): number | null {
-	if (!props.series) return null;
-	const p = props.series.coordinateToPrice(y);
-	return p !== null && Number.isFinite(p) && p > 0 ? p : null;
+	const price = coordinateToPrice(props.series, y);
+	return price !== null && price > 0 ? price : null;
 }
 
 function getLocalCoords(event: PointerEvent): { x: number; y: number } | null {
@@ -68,10 +70,10 @@ function syncChartCrosshair(event: PointerEvent) {
 	if (!coords) return;
 
 	const rawPrice = yToPrice(coords.y);
-	const rawTime = props.chart.timeScale().coordinateToTime(coords.x);
-	if (rawPrice === null || rawTime === null) return;
+	const chartTime = coordinateToChartTime(props.chart, coords.x);
+	if (rawPrice === null || chartTime === null) return;
 
-	props.chart.setCrosshairPosition(rawPrice, rawTime as UTCTimestamp, props.series);
+	props.chart.setCrosshairPosition(rawPrice, chartTime, props.series);
 }
 
 function clearChartCrosshair() {

@@ -13,45 +13,37 @@ const SNAPSHOT_FONT_FAMILY = "Calibri, Carlito, Arial, sans-serif";
 const SNAPSHOT_SVG_FONT_SIZE = '9';
 const SNAPSHOT_BADGE_FONT = `9px ${SNAPSHOT_FONT_FAMILY}`;
 
-function loadImageFromSvgElement(
+async function loadImageFromSvgElement(
 	svgEl: SVGSVGElement,
 	width: number,
 	height: number
-): Promise<HTMLImageElement | null> {
-	return new Promise((resolve) => {
-		try {
-			const cloned = svgEl.cloneNode(true) as SVGSVGElement;
-			cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-			cloned.setAttribute('width', String(Math.max(1, Math.round(width))));
-			cloned.setAttribute('height', String(Math.max(1, Math.round(height))));
+): Promise<HTMLImageElement> {
+	const cloned = svgEl.cloneNode(true) as SVGSVGElement;
+	cloned.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+	cloned.setAttribute('width', String(Math.max(1, Math.round(width))));
+	cloned.setAttribute('height', String(Math.max(1, Math.round(height))));
 
-			// Явно задаём компактный sans-serif шрифт для текстовых меток на снимке,
-			// чтобы при рендере SVG в Image не подставлялся Times New Roman
-			const textNodes = Array.from(cloned.querySelectorAll('text'));
-			for (const txt of textNodes) {
-				txt.setAttribute('font-family', SNAPSHOT_FONT_FAMILY);
-				txt.setAttribute('font-size', SNAPSHOT_SVG_FONT_SIZE);
-			}
+	const textNodes = Array.from(cloned.querySelectorAll('text'));
+	for (const txt of textNodes) {
+		txt.setAttribute('font-family', SNAPSHOT_FONT_FAMILY);
+		txt.setAttribute('font-size', SNAPSHOT_SVG_FONT_SIZE);
+	}
 
-			const serializer = new XMLSerializer();
-			const svgString = serializer.serializeToString(cloned);
-			const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
-			const url = URL.createObjectURL(blob);
+	const serializer = new XMLSerializer();
+	const svgString = serializer.serializeToString(cloned);
+	const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+	const url = URL.createObjectURL(blob);
 
+	try {
+		return await new Promise<HTMLImageElement>((resolve, reject) => {
 			const img = new Image();
-			img.onload = () => {
-				URL.revokeObjectURL(url);
-				resolve(img);
-			};
-			img.onerror = () => {
-				URL.revokeObjectURL(url);
-				resolve(null);
-			};
+			img.onload = () => resolve(img);
+			img.onerror = () => reject(new Error('Не удалось отрисовать SVG-слой на снимке'));
 			img.src = url;
-		} catch {
-			resolve(null);
-		}
-	});
+		});
+	} finally {
+		URL.revokeObjectURL(url);
+	}
 }
 
 function drawAlertBadges(
@@ -139,7 +131,6 @@ export async function captureChartAreaBlob({
 		if (sRect.width <= 0 || sRect.height <= 0) continue;
 
 		const img = await loadImageFromSvgElement(svgEl, sRect.width, sRect.height);
-		if (!img) continue;
 
 		const dx = (sRect.left - rect.left) * dpr;
 		const dy = (sRect.top - rect.top) * dpr;

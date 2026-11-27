@@ -1,0 +1,132 @@
+import type { DrawingObject, PriceTimePoint } from '../types/drawings';
+
+export type ProjectedDrawing =
+	| {
+			item: DrawingObject;
+			kind: 'ray';
+			x1: number;
+			y1: number;
+			x2: number;
+			y2: number;
+	  }
+	| {
+			item: DrawingObject;
+			kind: 'rectangle';
+			left: number;
+			top: number;
+			width: number;
+			height: number;
+			endX: number;
+			endY: number;
+	  }
+	| {
+			item: DrawingObject;
+			kind: 'segment';
+			x1: number;
+			y1: number;
+			x2: number;
+			endX: number;
+			price: number;
+	  };
+
+export interface DrawingProjection {
+	timeToX: (time: PriceTimePoint['time']) => number | null;
+	priceToY: (price: number) => number | null;
+	rightEdge: number;
+}
+
+export function projectDrawings(
+	drawings: readonly DrawingObject[],
+	{ timeToX, priceToY, rightEdge }: DrawingProjection
+): ProjectedDrawing[] {
+	const result: ProjectedDrawing[] = [];
+
+	for (const item of drawings) {
+		const y1 = priceToY(item.start.price);
+		const x1 = timeToX(item.start.time);
+		if (y1 === null || x1 === null) continue;
+
+		if (item.kind === 'ray') {
+			result.push({
+				item,
+				kind: 'ray',
+				x1,
+				y1,
+				x2: Math.max(x1, rightEdge),
+				y2: y1,
+			});
+			continue;
+		}
+
+		const endPoint = item.end ?? item.start;
+		const x2 = timeToX(endPoint.time);
+		if (x2 === null) continue;
+
+		if (item.kind === 'segment') {
+			result.push({
+				item,
+				kind: 'segment',
+				x1,
+				y1,
+				x2,
+				endX: x2,
+				price: item.start.price,
+			});
+			continue;
+		}
+
+		const y2 = priceToY(endPoint.price);
+		if (y2 === null) continue;
+		result.push({
+			item,
+			kind: 'rectangle',
+			left: Math.min(x1, x2),
+			top: Math.min(y1, y2),
+			width: Math.max(2, Math.abs(x2 - x1)),
+			height: Math.max(2, Math.abs(y2 - y1)),
+			endX: x2,
+			endY: y2,
+		});
+	}
+
+	return result;
+}
+
+export function findFocusedDrawingId(
+	shapes: readonly ProjectedDrawing[],
+	x: number,
+	y: number
+): string | null {
+	const lineToleranceY = 6;
+	const edgeToleranceX = 4;
+	let bestLineId: string | null = null;
+	let bestLineDist = Number.POSITIVE_INFINITY;
+
+	for (const shape of shapes) {
+		if (shape.kind !== 'segment' && shape.kind !== 'ray') continue;
+		const minX = Math.min(shape.x1, shape.x2) - edgeToleranceX;
+		const maxX = Math.max(shape.x1, shape.x2) + edgeToleranceX;
+		const dy = Math.abs(y - shape.y1);
+		if (x >= minX && x <= maxX && dy <= lineToleranceY && dy < bestLineDist) {
+			bestLineDist = dy;
+			bestLineId = shape.item.id;
+		}
+	}
+
+	if (bestLineId) return bestLineId;
+
+	for (let i = shapes.length - 1; i >= 0; i -= 1) {
+		const shape = shapes[i];
+		if (!shape || shape.kind !== 'rectangle') continue;
+		if (
+			x >= shape.left - edgeToleranceX &&
+			x <= shape.left + shape.width + edgeToleranceX &&
+			y >= shape.top - edgeToleranceX &&
+			y <= shape.top + shape.height + edgeToleranceX
+		) {
+			return shape.item.id;
+		}
+	}
+
+	return null;
+}

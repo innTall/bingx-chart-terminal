@@ -19,6 +19,8 @@ export interface MagnetResolveResult {
 
 // Настройки силы магнита (в пикселях): легко подстроить под свой глаз
 export const MAGNET_CONFIG = {
+	// Only the latest candles are considered by the drawing overlay.
+	recentCandleLimit: 100,
 	// Радиус притяжения по вертикали к High / Low / Close
 	pixelRadius: 18,
 	// Максимальное расстояние по горизонтали от центра свечи для захвата
@@ -64,10 +66,17 @@ export function resolveMagnetState(
 	pixelY: number,
 	opts: MagnetOptions
 ): MagnetResolveResult | null {
+	if (!Number.isFinite(pixelX) || !Number.isFinite(pixelY)) return null;
+
 	const baseTime = opts.xToTime(pixelX);
 	const rawPrice = opts.yToPrice(pixelY);
 
-	if (baseTime === null || rawPrice === null || !Number.isFinite(rawPrice)) {
+	if (
+		baseTime === null ||
+		rawPrice === null ||
+		!Number.isFinite(Number(baseTime)) ||
+		!Number.isFinite(rawPrice)
+	) {
 		return null;
 	}
 
@@ -78,6 +87,9 @@ export function resolveMagnetState(
 	}
 
 	const maxDx = opts.horizontalSnapPx ?? MAGNET_CONFIG.horizontalSnapPx;
+	if (!Number.isFinite(maxDx) || maxDx < 0) {
+		return { point: fallbackPoint, snapped: false, target: null };
+	}
 	const { candle, x: candleX, dx } = findNearestCandleByScreenX(
 		opts.candles,
 		pixelX,
@@ -90,6 +102,9 @@ export function resolveMagnetState(
 	}
 
 	const radius = opts.pixelRadius ?? MAGNET_CONFIG.pixelRadius;
+	if (!Number.isFinite(radius) || radius < 0) {
+		return { point: fallbackPoint, snapped: false, target: null };
+	}
 	const candidates: ReadonlyArray<{ kind: MagnetAnchorKind; price: number }> = [
 		{ kind: 'high', price: candle.high },
 		{ kind: 'low', price: candle.low },

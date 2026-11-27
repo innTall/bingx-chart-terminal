@@ -19,14 +19,13 @@ import type { DrawingToolType } from './TopHeader.vue';
 import type { PriceAlert } from '../types/alerts';
 import ChartAlertsOverlay from './ChartAlertsOverlay.vue';
 import { captureChartAreaBlob, type AlertBadgeSnapshot } from '../utils/captureChart';
+import { fromChartTimestamp, toChartTimestamp } from '../utils/chartCoordinates';
 
 interface VisibleBounds {
 	minLow: number;
 	maxHigh: number;
 }
 
-// Смещение времени графика в UTC+2 (в секундах)
-const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60;
 const stageRef = ref<HTMLDivElement | null>(null);
 
 // Настройки вертикального заполнения поля графика (удобно менять под свой глаз)
@@ -110,14 +109,6 @@ let resizeObserver: ResizeObserver | null = null;
 let visibleBounds: VisibleBounds | null = null;
 let spacingSaveTimer: number | null = null;
 let isInitialLoadDone = false;
-
-function toChartTimestamp(utcSec: number): UTCTimestamp {
-	return (Number(utcSec) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
-}
-
-function fromChartTimestamp(shiftedSec: number): number {
-	return Number(shiftedSec) - UTC_PLUS_2_OFFSET_SEC;
-}
 
 function computeVisibleBounds(range: LogicalRange | null, list: Candle[]): VisibleBounds | null {
 	if (!range || list.length === 0) return null;

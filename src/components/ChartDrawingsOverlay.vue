@@ -14,62 +14,24 @@ import {
 	type PriceTimePoint,
 } from '../types/drawings';
 import type { Candle } from '../types/market';
-import { resolveMagnetState, type MagnetSnapTarget } from '../utils/magnet';
-
-type DragMode =
-	| { type: 'none' }
-	| { type: 'draft-rect'; id: string; start: PriceTimePoint }
-	| { type: 'draft-segment'; id: string; start: PriceTimePoint }
-	| { type: 'move-ray'; id: string; offsetTime: number; offsetPrice: number }
-	| {
-		type: 'move-rect';
-		id: string;
-		anchor: PriceTimePoint;
-		origStart: PriceTimePoint;
-		origEnd: PriceTimePoint;
-	}
-	| {
-		type: 'move-segment';
-		id: string;
-		anchor: PriceTimePoint;
-		origStart: PriceTimePoint;
-		origEnd: PriceTimePoint;
-	}
-	| { type: 'resize-rect-end'; id: string }
-	| { type: 'resize-segment-end'; id: string };
-
-type ComputedShape =
-	| {
-		item: DrawingObject;
-		kind: 'ray';
-		x1: number;
-		y1: number;
-		x2: number;
-		y2: number;
-	}
-	| {
-		item: DrawingObject;
-		kind: 'rectangle';
-		left: number;
-		top: number;
-		width: number;
-		height: number;
-		endX: number;
-		endY: number;
-	}
-	| {
-		item: DrawingObject;
-		kind: 'segment';
-		x1: number;
-		y1: number;
-		x2: number;
-		endX: number;
-		price: number;
-	};
-
-const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60;
-// Для магнита смотрим только свежую часть графика (последние 100 свечей)
-const RECENT_CANDLES_LIMIT = 100;
+import {
+	MAGNET_CONFIG,
+	resolveMagnetState,
+	type MagnetSnapTarget,
+} from '../utils/magnet';
+import {
+	coordinateToTime,
+	coordinateToPrice,
+	priceToCoordinate,
+	toChartTimestamp,
+	timeToCoordinate,
+} from '../utils/chartCoordinates';
+import {
+	findFocusedDrawingId,
+	projectDrawings,
+	type ProjectedDrawing,
+} from '../utils/drawingGeometry';
+import { updateDrawingForDrag, type DragMode } from '../utils/drawingDrag';
 
 const props = defineProps<{
 	chart: IChartApi | null;
@@ -98,8 +60,8 @@ let dragState: DragMode = { type: 'none' };
 let rafId: number | null = null;
 
 const recentCandles = computed(() =>
-	props.candles.length > RECENT_CANDLES_LIMIT
-		? props.candles.slice(-RECENT_CANDLES_LIMIT)
+	props.candles.length > MAGNET_CONFIG.recentCandleLimit
+		? props.candles.slice(-MAGNET_CONFIG.recentCandleLimit)
 		: props.candles
 );
 
@@ -122,29 +84,19 @@ function bumpRender() {
 }
 
 function priceToY(price: number): number | null {
-	if (!props.series) return null;
-	const y = props.series.priceToCoordinate(price);
-	return y !== null && Number.isFinite(y) ? y : null;
+	return priceToCoordinate(props.series, price);
 }
 
 function yToPrice(y: number): number | null {
-	if (!props.series) return null;
-	const p = props.series.coordinateToPrice(y);
-	return p !== null && Number.isFinite(p) ? p : null;
+	return coordinateToPrice(props.series, y);
 }
 
 function timeToX(time: UTCTimestamp): number | null {
-	if (!props.chart) return null;
-	const shiftedTime = (Number(time) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
-	const x = props.chart.timeScale().timeToCoordinate(shiftedTime);
-	return x !== null && Number.isFinite(x) ? x : null;
+	return timeToCoordinate(props.chart, Number(time));
 }
 
 function xToTime(x: number): UTCTimestamp | null {
-	if (!props.chart) return null;
-	const t = props.chart.timeScale().coordinateToTime(x);
-	if (t === null) return null;
-	return Math.max(0, Number(t) - UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
+	return coordinateToTime(props.chart, x);
 }
 
 function getLocalCoords(event: PointerEvent): { x: number; y: number } | null {
@@ -283,7 +235,9 @@ function handleOverlayPointerDown(event: PointerEvent) {
 function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 	let targetItem = item;
 	if (event.button !== 0) return;
-	if (props.activeTool === 'none' && focusedId.value && focusedId.value !== item.id) {
+	if (props.activeTool !== 'none') return;
+	event.stopPropagation();
+	if (focusedId.value && focusedId.value !== item.id) {
 		const candidate = props.drawings.find((d) => d.id === focusedId.value);
 		if (candidate && (candidate.kind === 'segment' || candidate.kind === 'ray')) {
 			targetItem = candidate;
@@ -296,28 +250,28 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 	const point = pickPoint(event, false);
 	if (!point) return;
 
-	if (item.kind === 'ray') {
+	if (targetItem.kind === 'ray') {
 		dragState = {
 			type: 'move-ray',
-			id: item.id,
-			offsetTime: Number(item.start.time) - Number(point.time),
-			offsetPrice: item.start.price - point.price,
+			id: targetItem.id,
+			offsetTime: Number(targetItem.start.time) - Number(point.time),
+			offsetPrice: targetItem.start.price - point.price,
 		};
-	} else if (item.kind === 'rectangle' && item.end) {
+	} else if (targetItem.kind === 'rectangle' && targetItem.end) {
 		dragState = {
 			type: 'move-rect',
-			id: item.id,
+			id: targetItem.id,
 			anchor: point,
-			origStart: { ...item.start },
-			origEnd: { ...item.end },
+			origStart: { ...targetItem.start },
+			origEnd: { ...targetItem.end },
 		};
-	} else if (item.kind === 'segment') {
-		const endPt = item.end ?? item.start;
+	} else if (targetItem.kind === 'segment') {
+		const endPt = targetItem.end ?? targetItem.start;
 		dragState = {
 			type: 'move-segment',
-			id: item.id,
+			id: targetItem.id,
 			anchor: point,
-			origStart: { ...item.start },
+			origStart: { ...targetItem.start },
 			origEnd: { ...endPt },
 		};
 	}
@@ -327,6 +281,7 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 
 function handleRectRightEdgePointerDown(event: PointerEvent, item: DrawingObject) {
 	if (event.button !== 0) return;
+	if (props.activeTool !== 'none') return;
 	event.stopPropagation();
 	selectedId.value = item.id;
 	dragState = { type: 'resize-rect-end', id: item.id };
@@ -335,6 +290,7 @@ function handleRectRightEdgePointerDown(event: PointerEvent, item: DrawingObject
 
 function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject) {
 	if (event.button !== 0) return;
+	if (props.activeTool !== 'none') return;
 	event.stopPropagation();
 	selectedId.value = item.id;
 	dragState = { type: 'resize-segment-end', id: item.id };
@@ -349,7 +305,9 @@ function handlePointerMove(event: PointerEvent) {
 		} else {
 			clearMagnetTarget();
 			const coords = getLocalCoords(event);
-			focusedId.value = coords ? findFocusedShapeId(coords.x, coords.y) : null;
+			focusedId.value = coords
+				? findFocusedDrawingId(computedShapes.value, coords.x, coords.y)
+				: null;
 		}
 		syncChartCrosshair(event);
 		return;
@@ -358,10 +316,7 @@ function handlePointerMove(event: PointerEvent) {
 	if (dragState.type === 'draft-rect') {
 		const point = pickPoint(event, true);
 		if (!point) return;
-		const draftId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => (d.id === draftId ? { ...d, end: point } : d))
-		);
+		applyDragUpdate(point);
 		return;
 	}
 
@@ -370,38 +325,14 @@ function handlePointerMove(event: PointerEvent) {
 		clearMagnetTarget();
 		const point = pickPoint(event, false);
 		if (!point) return;
-		const draftId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== draftId) return d;
-				return {
-					...d,
-					end: {
-						time: point.time,
-						price: d.start.price,
-					},
-				};
-			})
-		);
+		applyDragUpdate(point);
 		return;
 	}
 
 	if (dragState.type === 'resize-rect-end') {
 		const point = pickPoint(event, true);
 		if (!point) return;
-		const targetId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== targetId || !d.end) return d;
-				return {
-					...d,
-					end: {
-						time: point.time,
-						price: d.end.price,
-					},
-				};
-			})
-		);
+		applyDragUpdate(point);
 		return;
 	}
 
@@ -410,138 +341,39 @@ function handlePointerMove(event: PointerEvent) {
 		clearMagnetTarget();
 		const point = pickPoint(event, false);
 		if (!point) return;
-		const targetId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== targetId) return d;
-				return {
-					...d,
-					end: {
-						time: point.time,
-						price: d.start.price,
-					},
-				};
-			})
-		);
+		applyDragUpdate(point);
 		return;
 	}
-
-	// Перемещение всей фигуры целиком — без магнита на точке захвата
-	clearMagnetTarget();
-	const point = pickPoint(event, false);
-	if (!point) return;
 
 	if (dragState.type === 'move-ray') {
 		const point = pickPoint(event, true);
 		if (!point) return;
-		const targetId = dragState.id;
-		const nextTime = Math.max(
-			1,
-			Math.floor(Number(point.time) + dragState.offsetTime)
-		) as UTCTimestamp;
-		const nextPrice = point.price + dragState.offsetPrice;
-		commitDrawings(
-			props.drawings.map((d) =>
-				d.id === targetId ? { ...d, start: { time: nextTime, price: nextPrice } } : d
-			)
-		);
+		applyDragUpdate(point);
 		return;
 	}
 
 	if (dragState.type === 'move-rect') {
-		const moveState = dragState;
-		const dt = Number(point.time) - Number(moveState.anchor.time);
-		const dp = point.price - moveState.anchor.price;
-
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== moveState.id) return d;
-				return {
-					...d,
-					start: {
-						time: Math.max(
-							1,
-							Math.floor(Number(moveState.origStart.time) + dt)
-						) as UTCTimestamp,
-						price: moveState.origStart.price + dp,
-					},
-					end: {
-						time: Math.max(
-							1,
-							Math.floor(Number(moveState.origEnd.time) + dt)
-						) as UTCTimestamp,
-						price: moveState.origEnd.price + dp,
-					},
-				};
-			})
-		);
+		const point = pickPoint(event, false);
+		if (!point) return;
+		applyDragUpdate(point);
 		return;
 	}
 
 	if (dragState.type === 'move-segment') {
 		const point = pickPoint(event, true);
 		if (!point) return;
-		const moveState = dragState;
-		const dt = Number(point.time) - Number(moveState.anchor.time);
-		const dp = point.price - moveState.anchor.price;
-		const spanSec = Math.max(0, Number(moveState.origEnd.time) - Number(moveState.origStart.time));
-		const nextStartTime = Math.max(
-			1,
-			Math.floor(Number(moveState.origStart.time) + dt)
-		) as UTCTimestamp;
-		const nextEndTime = (Number(nextStartTime) + spanSec) as UTCTimestamp;
-		const nextPrice =
-			magnetTarget.value !== null ? magnetTarget.value.price : moveState.origStart.price + dp;
-
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== moveState.id) return d;
-				return {
-					...d,
-					start: { time: nextStartTime, price: nextPrice },
-					end: { time: nextEndTime, price: nextPrice },
-				};
-			})
-		);
+		applyDragUpdate(point, magnetTarget.value?.price);
 		return;
 	}
 }
 
-function findFocusedShapeId(x: number, y: number): string | null {
-	const lineToleranceY = 6;
-	const edgeToleranceX = 4;
-
-	let bestLineId: string | null = null;
-	let bestLineDist = Number.POSITIVE_INFINITY;
-
-	for (const shape of computedShapes.value) {
-		if (shape.kind === 'segment' || shape.kind === 'ray') {
-			const minX = Math.min(shape.x1, shape.x2) - edgeToleranceX;
-			const maxX = Math.max(shape.x1, shape.x2) + edgeToleranceX;
-			const dy = Math.abs(y - shape.y1);
-			if (x >= minX && x <= maxX && dy <= lineToleranceY && dy < bestLineDist) {
-				bestLineDist = dy;
-				bestLineId = shape.item.id;
-			}
-		}
-	}
-
-	if (bestLineId) return bestLineId;
-
-	for (let i = computedShapes.value.length - 1; i >= 0; i -= 1) {
-		const shape = computedShapes.value[i];
-		if (!shape || shape.kind !== 'rectangle') continue;
-		if (
-			x >= shape.left - edgeToleranceX &&
-			x <= shape.left + shape.width + edgeToleranceX &&
-			y >= shape.top - edgeToleranceX &&
-			y <= shape.top + shape.height + edgeToleranceX
-		) {
-			return shape.item.id;
-		}
-	}
-
-	return null;
+function applyDragUpdate(point: PriceTimePoint, snappedPrice?: number) {
+	const mode = dragState;
+	commitDrawings(
+		props.drawings.map(
+			(drawing) => updateDrawingForDrag(drawing, mode, point, snappedPrice) ?? drawing
+		)
+	);
 }
 
 function handlePointerUp() {
@@ -563,7 +395,7 @@ function syncChartCrosshair(event: PointerEvent) {
 	const rawPrice = yToPrice(coords.y);
 	if (rawTime === null || rawPrice === null || !Number.isFinite(rawPrice)) return;
 
-	const shiftedTime = (Number(rawTime) + UTC_PLUS_2_OFFSET_SEC) as UTCTimestamp;
+	const shiftedTime = toChartTimestamp(Number(rawTime));
 	props.chart.setCrosshairPosition(rawPrice, shiftedTime, props.series);
 }
 
@@ -605,73 +437,25 @@ defineExpose({
 	clearSelection,
 });
 
-const computedShapes = computed<ComputedShape[]>(() => {
+const computedShapes = computed<ProjectedDrawing[]>(() => {
 	void renderTick.value;
 	void props.candles.length;
 
 	const fullWidth = overlayRef.value?.clientWidth ?? 800;
 	const paneWidth = props.chart?.timeScale().width() ?? fullWidth;
-	const rightEdge = Math.max(0, paneWidth);
-
-	const result: ComputedShape[] = [];
-
-	for (const item of props.drawings) {
-		const y1 = priceToY(item.start.price);
-		const x1 = timeToX(item.start.time);
-		if (y1 === null || x1 === null) continue;
-
-		if (item.kind === 'ray') {
-			result.push({
-				item,
-				kind: 'ray',
-				x1,
-				y1,
-				x2: Math.max(x1, rightEdge),
-				y2: y1,
-			});
-			continue;
-		}
-
-		if (item.kind === 'segment') {
-			const endPoint = item.end ?? item.start;
-			const x2 = timeToX(endPoint.time);
-			if (x2 === null) continue;
-			result.push({
-				item,
-				kind: 'segment',
-				x1,
-				y1,
-				x2,
-				endX: x2,
-				price: item.start.price,
-			});
-			continue;
-		}
-
-		const endPoint = item.end ?? item.start;
-		const x2 = timeToX(endPoint.time);
-		const y2 = priceToY(endPoint.price);
-		if (x2 === null || y2 === null) continue;
-
-		result.push({
-			item,
-			kind: 'rectangle',
-			left: Math.min(x1, x2),
-			top: Math.min(y1, y2),
-			width: Math.max(2, Math.abs(x2 - x1)),
-			height: Math.max(2, Math.abs(y2 - y1)),
-			endX: x2,
-			endY: y2,
-		});
-	}
-
-	return result;
+	return projectDrawings(props.drawings, {
+		timeToX,
+		priceToY,
+		rightEdge: Math.max(0, paneWidth),
+	});
 });
 
 watch(
 	() => [props.chart, props.series, props.symbol],
 	() => {
 		selectedId.value = null;
+		focusedId.value = null;
+		dragState = { type: 'none' };
 		clearMagnetTarget();
 		bumpRender();
 	}
@@ -681,6 +465,16 @@ watch(
 	() => props.magnetEnabled,
 	(enabled) => {
 		if (!enabled) clearMagnetTarget();
+	}
+);
+
+watch(
+	() => props.activeTool,
+	(tool) => {
+		if (tool !== 'none') {
+			focusedId.value = null;
+			clearMagnetTarget();
+		}
 	}
 );
 
@@ -712,9 +506,9 @@ onBeforeUnmount(() => {
 		<!-- SVG-слой для Луча, Отрезка и Прямоугольника -->
 		<svg ref="overlayRef" class="h-full w-full"
 			:class="activeTool !== 'none' ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
-			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp" @pointerleave="clearChartCrosshair">
-			<g v-for="shape in computedShapes" :key="shape.item.id" class="pointer-events-auto cursor-move"
-				@pointerdown="handleShapePointerDown($event, shape.item)">
+			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp"
+			@pointercancel="handlePointerUp" @pointerleave="clearChartCrosshair">
+			<g v-for="shape in computedShapes" :key="shape.item.id" class="pointer-events-auto cursor-move">
 				<RayDrawing v-if="shape.kind === 'ray'" :item="shape.item" :x1="shape.x1" :y1="shape.y1" :x2="shape.x2"
 					:y2="shape.y2" @shape-pointer-down="handleShapePointerDown" :focused="focusedId === shape.item.id"/>
 

@@ -3,11 +3,44 @@ import type { DrawingObject } from '../../types/drawings';
 const LS_PREFIX = 'rm_chart:drawings:v1:';
 const MAX_OBJECTS_PER_SYMBOL = 20;
 
-// Элемент считается «именным» только при непустой текстовой метке
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isPriceTimePoint(value: unknown): boolean {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.time === 'number' &&
+		Number.isFinite(value.time) &&
+		value.time > 0 &&
+		typeof value.price === 'number' &&
+		Number.isFinite(value.price) &&
+		value.price > 0
+	);
+}
+
 function hasLabel(item: unknown): item is DrawingObject {
-	if (!item || typeof item !== 'object') return false;
-	const obj = item as DrawingObject;
-	return typeof obj.style?.label === 'string' && obj.style.label.trim().length > 0;
+	if (!isRecord(item) || !isRecord(item.style)) return false;
+	if (item.kind !== 'ray' && item.kind !== 'rectangle' && item.kind !== 'segment') {
+		return false;
+	}
+
+	const style = item.style;
+	return (
+		typeof item.id === 'string' &&
+		item.id.length > 0 &&
+		typeof item.symbol === 'string' &&
+		item.symbol.length > 0 &&
+		isPriceTimePoint(item.start) &&
+		(item.end === undefined || isPriceTimePoint(item.end)) &&
+		typeof style.color === 'string' &&
+		style.color.length > 0 &&
+		typeof style.lineWidth === 'number' &&
+		Number.isFinite(style.lineWidth) &&
+		style.lineWidth > 0 &&
+		typeof style.label === 'string' &&
+		style.label.trim().length > 0
+	);
 }
 
 function filterLabeledDrawings(items: unknown): DrawingObject[] {
