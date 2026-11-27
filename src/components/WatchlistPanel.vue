@@ -31,6 +31,7 @@ const MARKER_DOT_CLASS: Record<MarkerColor, string> = {
 const props = defineProps<{
 	items: MarketSymbolItem[];
 	activeSymbol: string;
+	activeAlertSymbols: readonly string[];
 }>();
 
 const emit = defineEmits<{
@@ -40,6 +41,9 @@ const emit = defineEmits<{
 const sortMode = ref<SymbolSortMode>('default');
 const markers = ref<Record<string, WatchlistMarkerColor>>(loadWatchlistMarkers());
 const buttonRefs = ref<Record<string, HTMLButtonElement | null>>({});
+const activeAlertSymbolSet = computed(
+	() => new Set(props.activeAlertSymbols.map((symbol) => symbol.trim().toUpperCase()))
+);
 
 function getPinRank(label: string): number {
 	const idx = PINNED_ORDER.indexOf(label.toUpperCase() as (typeof PINNED_ORDER)[number]);
@@ -155,7 +159,10 @@ watch(
 					<span role="button" tabindex="-1" title="Цветной значок"
 						class="inline-block h-2 w-2 shrink-0 rounded-full border transition"
 						:class="MARKER_DOT_CLASS[getMarker(item.symbol)]" @click="cycleMarker($event, item.symbol)" />
-					<span class="truncate">{{ item.label }}</span>
+					<span
+						class="truncate"
+						:class="activeAlertSymbolSet.has(item.symbol.trim().toUpperCase()) ? 'text-amber-300' : ''"
+					>{{ item.label }}</span>
 				</span>
 
 				<span class="ml-1 shrink-0 font-mono text-[11px] text-slate-400">

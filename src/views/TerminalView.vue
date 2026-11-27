@@ -21,8 +21,10 @@ import {
 	type MarketSymbolItem,
 } from '../services/bingx/tickers';
 import {
-	loadAlertsForSymbol,
+	loadTriggeredAlertEvents,
+	loadAllAlerts,
 	saveAlertsForSymbol,
+	saveTriggeredAlertEvents,
 } from '../services/storage/alertsStorage';
 import { playAlertSound } from '../utils/alertSound';
 import {
@@ -60,7 +62,7 @@ const activePreset = ref<DrawingPreset | null>(null);
 const drawings = ref<DrawingObject[]>([]);
 const alerts = ref<PriceAlert[]>([]);
 const alertPlacing = ref<boolean>(false);
-const triggeredAlert = ref<TriggeredAlertEvent | null>(null);
+const triggeredAlerts = ref<TriggeredAlertEvent[]>([]);
 
 const candles = ref<Candle[]>([]);
 const latestCandle = ref<Candle | null>(null);
@@ -69,6 +71,13 @@ const candleError = ref<string | null>(null);
 const contractError = ref<string | null>(null);
 
 const activeSymbolLabel = computed(() => toDisplaySymbol(activeSymbol.value));
+const activeAlertSymbols = computed(() => [
+	...new Set(
+		alerts.value
+			.filter((alert) => alert.active)
+			.map((alert) => alert.symbol.trim().toUpperCase())
+	),
+]);
 
 const chartStageRef = ref<InstanceType<typeof ChartStage> | null>(null);
 const capturingScreenshot = ref<boolean>(false);
@@ -79,7 +88,9 @@ let klinesRequestSeq = 0;
 let activeAbortController: AbortController | null = null;
 let liveSub: LiveKlineSubscription | null = null;
 let pricesTimerId: number | null = null;
-let prevTrackedPrice: number | null = null;
+let alertPricesTimerId: number | null = null;
+let alertPricePolling = false;
+const previousAlertPrices = new Map<string, number>();
 
 function applySymbolPrice(symbol: string, price: number) {
 	const upper = symbol.toUpperCase();
@@ -98,14 +109,23 @@ function handleDrawingsUpdate(nextItems: DrawingObject[]) {
 	saveDrawingsForSymbol(symbolKey, nextItems);
 }
 
-function loadAlerts(symbol: string) {
-	alerts.value = loadAlertsForSymbol(symbol);
+function syncAlerts(nextItems: PriceAlert[]) {
+	const symbolsToPersist = new Set([
+		...alerts.value.map((item) => item.symbol.trim().toUpperCase()),
+		...nextItems.map((item) => item.symbol.trim().toUpperCase()),
+	]);
+	alerts.value = nextItems;
+	for (const symbol of symbolsToPersist) {
+		saveAlertsForSymbol(
+			symbol,
+			nextItems.filter((item) => item.symbol.trim().toUpperCase() === symbol)
+		);
+	}
 }
 
-function syncAlerts(nextItems: PriceAlert[]) {
-	const symbolKey = activeSymbol.value;
-	alerts.value = nextItems;
-	saveAlertsForSymbol(symbolKey, nextItems);
+function syncTriggeredAlerts(nextEvents: TriggeredAlertEvent[]) {
+	triggeredAlerts.value = nextEvents;
+	saveTriggeredAlertEvents(nextEvents);
 }
 
 function handleToggleAlertPlacing() {
@@ -151,58 +171,91 @@ function handleUpdateAlertPrice(payload: { id: string; price: number }) {
 			: item
 	);
 	syncAlerts(next);
+	syncTriggeredAlerts(
+		triggeredAlerts.value.filter((event) => event.alert.id !== payload.id)
+	);
 }
 
-function handleDeleteAlert(id: string) {
+function deleteAlertById(id: string) {
 	syncAlerts(alerts.value.filter((item) => item.id !== id));
+	syncTriggeredAlerts(
+		triggeredAlerts.value.filter((event) => event.alert.id !== id)
+	);
 }
 
-function checkAlertsCrossing(nextPrice: number) {
-	if (!Number.isFinite(nextPrice)) return;
+async function pollActiveAlertPrices() {
+	if (alertPricePolling) return;
 
-	if (prevTrackedPrice === null) {
-		prevTrackedPrice = nextPrice;
-		return;
+	const activeBySymbol = new Map<string, PriceAlert[]>();
+	for (const alert of alerts.value) {
+		if (!alert.active) continue;
+		const symbol = alert.symbol.trim().toUpperCase();
+		const grouped = activeBySymbol.get(symbol) ?? [];
+		grouped.push(alert);
+		activeBySymbol.set(symbol, grouped);
 	}
 
-	const prevPrice = prevTrackedPrice;
-	prevTrackedPrice = nextPrice;
-	if (prevPrice === nextPrice) return;
+	for (const symbol of previousAlertPrices.keys()) {
+		if (!activeBySymbol.has(symbol)) previousAlertPrices.delete(symbol);
+	}
 
-	let hasTriggered = false;
-	const now = Date.now();
+	const targetSymbols = [...activeBySymbol.keys()];
+	if (targetSymbols.length === 0) return;
 
-	const updated = alerts.value.map((item) => {
-		if (!item.active) return item;
+	alertPricePolling = true;
+	try {
+		const pricesBySymbol = await Promise.all(
+			targetSymbols.map((symbol) => fetchBingxPrices([symbol]))
+		);
+		const currentPrices = Object.assign({}, ...pricesBySymbol);
+		let nextAlerts = alerts.value;
+		const newEvents: TriggeredAlertEvent[] = [];
 
-		const crossedUp = prevPrice < item.price && nextPrice >= item.price;
-		const crossedDown = prevPrice > item.price && nextPrice <= item.price;
+		for (const symbol of targetSymbols) {
+			const currentPrice = currentPrices[symbol];
+			if (currentPrice === undefined || !Number.isFinite(currentPrice)) continue;
 
-		if (!crossedUp && !crossedDown) return item;
+			const previousPrice = previousAlertPrices.get(symbol);
+			previousAlertPrices.set(symbol, currentPrice);
+			if (previousPrice === undefined || previousPrice === currentPrice) continue;
 
-		hasTriggered = true;
-		const finishedAlert: PriceAlert = {
-			...item,
-			active: false,
-			triggeredAt: now,
-		};
+			const now = Date.now();
+			nextAlerts = nextAlerts.map((alert) => {
+				if (!alert.active || alert.symbol.trim().toUpperCase() !== symbol) return alert;
 
-		if (!triggeredAlert.value) {
-			triggeredAlert.value = {
-				alert: finishedAlert,
-				prevPrice,
-				currentPrice: nextPrice,
-				direction: crossedUp ? 'up' : 'down',
-				occurredAt: now,
-			};
-			playAlertSound();
+				const crossedUp = previousPrice < alert.price && currentPrice >= alert.price;
+				const crossedDown = previousPrice > alert.price && currentPrice <= alert.price;
+				if (!crossedUp && !crossedDown) return alert;
+
+				const triggeredAlert: PriceAlert = {
+					...alert,
+					active: false,
+					triggeredAt: now,
+				};
+				newEvents.push({
+					alert: triggeredAlert,
+					prevPrice: previousPrice,
+					currentPrice,
+					direction: crossedUp ? 'up' : 'down',
+					occurredAt: now,
+				});
+				return triggeredAlert;
+			});
 		}
 
-		return finishedAlert;
-	});
-
-	if (hasTriggered) {
-		syncAlerts(updated);
+		if (newEvents.length > 0) {
+			syncAlerts(nextAlerts);
+			const knownIds = new Set(triggeredAlerts.value.map((event) => event.alert.id));
+			syncTriggeredAlerts([
+				...triggeredAlerts.value,
+				...newEvents.filter((event) => !knownIds.has(event.alert.id)),
+			]);
+			playAlertSound();
+		}
+	} catch (err) {
+		console.error('Failed to poll prices for active alerts', err);
+	} finally {
+		alertPricePolling = false;
 	}
 }
 
@@ -269,7 +322,6 @@ function restartLiveStream(symbol: string, timeframe: Timeframe) {
 			if (symbol !== activeSymbol.value || timeframe !== activeTimeframe.value) return;
 			latestCandle.value = candle;
 			applySymbolPrice(symbol, candle.close);
-			checkAlertsCrossing(candle.close);
 
 			const current = candles.value;
 			if (current.length === 0) {
@@ -326,7 +378,6 @@ async function loadCandles(symbol: string, interval: Timeframe) {
 		if (last) {
 			latestCandle.value = last;
 			applySymbolPrice(symbol, last.close);
-			checkAlertsCrossing(last.close);
 		}
 
 		restartLiveStream(symbol, interval);
@@ -384,23 +435,34 @@ async function handleCaptureScreenshot() {
 onMounted(() => {
 	void loadContracts();
 	loadDrawings(activeSymbol.value);
-	loadAlerts(activeSymbol.value);
+	alerts.value = loadAllAlerts();
+	const completedAlertIds = new Set(
+		alerts.value
+			.filter((alert) => !alert.active && alert.triggeredAt !== undefined)
+			.map((alert) => alert.id)
+	);
+	syncTriggeredAlerts(
+		loadTriggeredAlertEvents().filter((event) =>
+			completedAlertIds.has(event.alert.id)
+		)
+	);
 	void loadCandles(activeSymbol.value, activeTimeframe.value);
 	void refreshWatchlistPrices();
+	void pollActiveAlertPrices();
 
 	pricesTimerId = window.setInterval(() => {
 		void refreshWatchlistPrices();
+	}, 5000);
+	alertPricesTimerId = window.setInterval(() => {
+		void pollActiveAlertPrices();
 	}, 5000);
 });
 
 watch(activeSymbol, (nextSymbol) => {
 	activeTool.value = 'none';
 	alertPlacing.value = false;
-	prevTrackedPrice = null;
 	drawings.value = [];
-	alerts.value = [];
 	loadDrawings(nextSymbol);
-	loadAlerts(nextSymbol);
 });
 
 watch([activeSymbol, activeTimeframe], ([nextSymbol, nextTf]) => {
@@ -413,6 +475,10 @@ onBeforeUnmount(() => {
 	if (pricesTimerId !== null) {
 		window.clearInterval(pricesTimerId);
 		pricesTimerId = null;
+	}
+	if (alertPricesTimerId !== null) {
+		window.clearInterval(alertPricesTimerId);
+		alertPricesTimerId = null;
 	}
 });
 </script>
@@ -442,16 +508,17 @@ onBeforeUnmount(() => {
 					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 					:active-preset="activePreset" :alerts="alerts" :alert-placing="alertPlacing" @save-preset="handleSavePreset"
 					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" @create-alert="handleCreateAlert"
-					@update-alert-price="handleUpdateAlertPrice" @delete-alert="handleDeleteAlert"
+					@update-alert-price="handleUpdateAlertPrice" @delete-alert="deleteAlertById"
 					@clear-alert-placing="alertPlacing = false" />
 			</section>
 
 			<WatchlistPanel class="h-full min-h-0" :items="symbols" :active-symbol="activeSymbol"
+				:active-alert-symbols="activeAlertSymbols"
 				@select-symbol="activeSymbol = $event" />
 		</main>
 
 		<BottomFooter />
 
-		<AlertTriggeredModal :event="triggeredAlert" @close="triggeredAlert = null" />
+		<AlertTriggeredModal :events="triggeredAlerts" @dismiss="deleteAlertById" />
 	</div>
 </template>
