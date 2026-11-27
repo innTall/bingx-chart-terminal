@@ -132,25 +132,25 @@ watch(
 		class="flex min-h-0 flex-col rounded border border-slate-800 bg-[#161616] p-2 outline-none focus:ring-1 focus:ring-sky-500/50"
 		@keydown="handleKeydown">
 		
-		<div class="mb-2 flex items-center justify-between border-b border-slate-800 pb-2 text-[11px]">
-			<button type="button" class="rounded px-2 py-1 font-medium transition" :class="sortMode === 'symbol-desc'
+		<div class="mb-1.5 flex items-center justify-between border-b border-slate-800 pb-1.5 text-[11px]">
+			<button type="button" class="rounded px-2 py-0.5 font-medium transition" :class="sortMode === 'symbol-desc'
 					? 'bg-sky-600/25 text-sky-300'
 					: 'bg-slate-800/80 text-slate-300 hover:bg-slate-800'
 				" @click="cycleSymbolSort">
-				Тикер
+				A-Z
 				<span v-if="sortMode === 'symbol-desc'">↓</span>
 				<span v-else>↑</span>
 			</button>
 
 			<span title="Symbols"
-				class="flex h-6 min-w-6 items-center justify-center rounded-full border border-slate-700 bg-slate-800/90 px-1.5 font-mono text-[11px] font-semibold text-slate-200">
+				class="flex h-5 min-w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-800/90 px-1.5 font-mono text-[10px] font-semibold text-slate-200">
 				{{ items.length }}
 			</span>
 		</div>
 
 		<div class="watchlist-scroll min-h-0 flex-1 overflow-y-auto pr-0.5">
 			<button v-for="item in orderedItems" :key="item.symbol" :ref="(el) => setButtonRef(item.symbol, el)" type="button"
-				class="group/row mb-1 flex w-full items-center justify-between rounded px-2.5 py-1.5 text-left text-xs transition"
+				class="group/row mb-0.5 flex h-6 w-full items-center justify-between rounded px-2 text-left text-xs transition"
 				:class="activeSymbol === item.symbol
 						? 'bg-sky-600/25 font-semibold text-sky-300 ring-1 ring-sky-500/60'
 						: 'text-slate-300 hover:bg-slate-800/70'

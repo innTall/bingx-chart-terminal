@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Camera, Bell, ChevronDown, Magnet, Minus, Spline, Square, Trash2 } from 'lucide-vue-next';
+import { Camera, Bell, ChevronDown, Magnet, Square, Trash2 } from 'lucide-vue-next';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
@@ -10,12 +10,10 @@ export type DrawingToolType = 'none' | 'segment' | 'ray' | 'rectangle';
 const TOOL_CONFIG: ReadonlyArray<{
 	kind: DrawingKind;
 	label: string;
-	draftTitle: string;
-	icon: typeof Spline;
 }> = [
-		{ kind: 'segment', label: 'Segment', draftTitle: 'New draft Segment', icon: Spline },
-		{ kind: 'ray', label: 'Ray', draftTitle: 'New draft Ray', icon: Minus },
-		{ kind: 'rectangle', label: 'Rectangle', draftTitle: 'New draft Rectangle', icon: Square },
+		{ kind: 'segment', label: 'Segment' },
+		{ kind: 'ray', label: 'Ray' },
+		{ kind: 'rectangle', label: 'Rectangle' },
 	];
 
 const props = defineProps<{
@@ -47,11 +45,6 @@ const openMenuKind = ref<DrawingKind | null>(null);
 
 function presetsByKind(kind: DrawingKind): DrawingPreset[] {
 	return props.presets.filter((p) => p.kind === kind);
-}
-
-function selectedPresetForKind(kind: DrawingKind): DrawingPreset | null {
-	if (!props.activePresetId) return null;
-	return props.presets.find((p) => p.id === props.activePresetId && p.kind === kind) ?? null;
 }
 
 function handleDraftClick(target: DrawingKind) {
@@ -96,7 +89,7 @@ onBeforeUnmount(() => {
 		<!-- Левая зона: логотип, символ и таймфрейм -->
 		<div class="flex items-center gap-3">
 			<div class="flex items-center gap-2">
-				<img src="/favicon.svg" alt="RM chart" class="h-6 w-6 shrink-0 object-contain" />
+				<img src="/icon-192x192.svg" alt="RM chart" class="h-6 w-6 shrink-0 object-contain" />
 				<span class="text-sm font-bold tracking-wide text-slate-100">RM chart</span>
 			</div>
 
@@ -136,19 +129,30 @@ onBeforeUnmount(() => {
 			<div ref="toolbarRef"
 				class="flex items-center gap-1.5 rounded border border-slate-800 bg-[#161616] px-1.5 py-0.5 text-xs">
 				<div v-for="tool in TOOL_CONFIG" :key="tool.kind" class="relative">
-					<div class="flex items-center rounded bg-neutral-900 transition"
-						:class="activeTool === tool.kind ? 'ring-1 ring-amber-500/50' : ''">
-						<button type="button" :title="tool.draftTitle"
-							class="flex items-center gap-1.5 rounded-l px-2 py-1 font-medium transition" :class="activeTool === tool.kind
-								? 'bg-amber-500/20 text-amber-300'
-								: 'text-slate-300 hover:bg-neutral-800'
+					<div class="flex items-center rounded transition"
+						:class="activeTool === tool.kind ? 'ring-1 ring-slate-400/70' : ''">
+						<button type="button" :aria-label="tool.label"
+							class="flex items-center justify-center rounded-l border border-slate-600/80 bg-slate-700/45 px-2 py-1 font-medium transition"
+							:class="activeTool === tool.kind
+								? 'border-slate-400 bg-slate-600/70 text-slate-100'
+								: 'text-slate-300 hover:border-slate-500 hover:bg-slate-700/70 hover:text-slate-100'
 								" @click="handleDraftClick(tool.kind)">
-							<component :is="tool.icon" class="h-3.5 w-3.5" />
-							<span>{{ selectedPresetForKind(tool.kind)?.name ?? tool.label }}</span>
+							<svg v-if="tool.kind === 'segment'" aria-hidden="true" viewBox="0 0 16 16"
+								class="h-3.5 w-3.5" fill="none">
+								<path d="M3.25 12.25 12.75 3.75" stroke="currentColor" stroke-width="1.5" />
+								<circle cx="3.25" cy="12.25" r="1.75" fill="currentColor" />
+								<circle cx="12.75" cy="3.75" r="1.75" fill="currentColor" />
+							</svg>
+							<svg v-else-if="tool.kind === 'ray'" aria-hidden="true" viewBox="0 0 16 16"
+								class="h-3.5 w-3.5" fill="none">
+								<path d="M3.5 8h10" stroke="currentColor" stroke-width="1.5" />
+								<circle cx="3.5" cy="8" r="1.75" fill="currentColor" />
+							</svg>
+							<Square v-else class="h-3.5 w-3.5" />
 						</button>
 
-						<button type="button" :title="`${tool.label} presets`" :aria-expanded="openMenuKind === tool.kind"
-							class="flex items-center rounded-r border-l border-neutral-800 px-1 py-1 text-slate-400 transition hover:bg-neutral-800 hover:text-slate-200"
+						<button type="button" :aria-label="`${tool.label} presets`" :aria-expanded="openMenuKind === tool.kind"
+							class="flex items-center rounded-r border border-l-0 border-slate-600/80 bg-neutral-900 px-1 py-1 text-slate-400 transition hover:border-slate-500 hover:bg-neutral-800 hover:text-slate-200"
 							:class="openMenuKind === tool.kind ? 'bg-neutral-800 text-slate-100' : ''"
 							@click.stop="togglePresetMenu(tool.kind)">
 							<ChevronDown class="h-3.5 w-3.5 transition-transform"
