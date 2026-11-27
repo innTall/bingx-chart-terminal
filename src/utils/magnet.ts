@@ -1,13 +1,28 @@
 import type { UTCTimestamp } from 'lightweight-charts';
-import type { Candle } from '../types/market';
 import type { PriceTimePoint } from '../types/drawings';
+import type { Candle } from '../types/market';
+
+export type MagnetAnchorKind = 'high' | 'low' | 'close';
+
+export interface MagnetSnapTarget {
+	x: number;
+	y: number;
+	price: number;
+	kind: MagnetAnchorKind;
+}
+
+export interface MagnetResolveResult {
+	point: PriceTimePoint;
+	snapped: boolean;
+	target: MagnetSnapTarget | null;
+}
 
 // Настройки силы магнита (в пикселях): легко подстроить под свой глаз
 export const MAGNET_CONFIG = {
 	// Радиус притяжения по вертикали к High / Low / Close
-	pixelRadius: 28,
+	pixelRadius: 18,
 	// Максимальное расстояние по горизонтали от центра свечи для захвата
-	horizontalSnapPx: 22,
+	horizontalSnapPx: 14,
 };
 
 export interface MagnetOptions {
@@ -25,28 +40,30 @@ function findNearestCandleByScreenX(
 	candles: readonly Candle[],
 	targetX: number,
 	timeToX: (time: UTCTimestamp) => number | null
-): { candle: Candle | null; dx: number } {
+): { candle: Candle | null; x: number | null; dx: number } {
 	let bestCandle: Candle | null = null;
+	let bestX: number | null = null;
 	let bestDx = Number.POSITIVE_INFINITY;
 
 	for (const c of candles) {
 		const cx = timeToX(c.time as UTCTimestamp);
-		if (cx === null) continue;
+		if (cx === null || !Number.isFinite(cx)) continue;
 		const dx = Math.abs(cx - targetX);
 		if (dx < bestDx) {
 			bestDx = dx;
 			bestCandle = c;
+			bestX = cx;
 		}
 	}
 
-	return { candle: bestCandle, dx: bestDx };
+	return { candle: bestCandle, x: bestX, dx: bestDx };
 }
 
-export function resolvePointWithMagnet(
+export function resolveMagnetState(
 	pixelX: number,
 	pixelY: number,
 	opts: MagnetOptions
-): PriceTimePoint | null {
+): MagnetResolveResult | null {
 	const baseTime = opts.xToTime(pixelX);
 	const rawPrice = opts.yToPrice(pixelY);
 
@@ -54,36 +71,68 @@ export function resolvePointWithMagnet(
 		return null;
 	}
 
+	const fallbackPoint: PriceTimePoint = { time: baseTime, price: rawPrice };
+
 	if (!opts.enabled || opts.candles.length === 0) {
-		return { time: baseTime, price: rawPrice };
+		return { point: fallbackPoint, snapped: false, target: null };
 	}
 
 	const maxDx = opts.horizontalSnapPx ?? MAGNET_CONFIG.horizontalSnapPx;
-	const { candle, dx } = findNearestCandleByScreenX(opts.candles, pixelX, opts.timeToX);
+	const { candle, x: candleX, dx } = findNearestCandleByScreenX(
+		opts.candles,
+		pixelX,
+		opts.timeToX
+	);
 
 	// Если рядом по горизонтали нет свечи — не цепляемся к далёким барам
-	if (!candle || dx > maxDx) {
-		return { time: baseTime, price: rawPrice };
+	if (!candle || candleX === null || dx > maxDx) {
+		return { point: fallbackPoint, snapped: false, target: null };
 	}
 
 	const radius = opts.pixelRadius ?? MAGNET_CONFIG.pixelRadius;
-	const candidates: number[] = [candle.high, candle.low, candle.close];
+	const candidates: ReadonlyArray<{ kind: MagnetAnchorKind; price: number }> = [
+		{ kind: 'high', price: candle.high },
+		{ kind: 'low', price: candle.low },
+		{ kind: 'close', price: candle.close },
+	];
 
-	let snappedPrice = rawPrice;
+	let bestTarget: MagnetSnapTarget | null = null;
 	let bestDy = Number.POSITIVE_INFINITY;
 
-	for (const candidatePrice of candidates) {
-		const py = opts.priceToY(candidatePrice);
-		if (py === null) continue;
+	for (const candidate of candidates) {
+		const py = opts.priceToY(candidate.price);
+		if (py === null || !Number.isFinite(py)) continue;
 		const dy = Math.abs(py - pixelY);
 		if (dy <= radius && dy < bestDy) {
 			bestDy = dy;
-			snappedPrice = candidatePrice;
+			bestTarget = {
+				x: candleX,
+				y: py,
+				price: candidate.price,
+				kind: candidate.kind,
+			};
 		}
 	}
 
+	if (!bestTarget) {
+		return { point: fallbackPoint, snapped: false, target: null };
+	}
+
 	return {
-		time: candle.time as UTCTimestamp,
-		price: snappedPrice,
+		point: {
+			time: candle.time as UTCTimestamp,
+			price: bestTarget.price,
+		},
+		snapped: true,
+		target: bestTarget,
 	};
+}
+
+export function resolvePointWithMagnet(
+	pixelX: number,
+	pixelY: number,
+	opts: MagnetOptions
+): PriceTimePoint | null {
+	const resolved = resolveMagnetState(pixelX, pixelY, opts);
+	return resolved ? resolved.point : null;
 }

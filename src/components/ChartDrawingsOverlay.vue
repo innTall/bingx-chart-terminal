@@ -14,7 +14,7 @@ import {
 	type PriceTimePoint,
 } from '../types/drawings';
 import type { Candle } from '../types/market';
-import { resolvePointWithMagnet } from '../utils/magnet';
+import { resolveMagnetState, type MagnetSnapTarget } from '../utils/magnet';
 
 type DragMode =
 	| { type: 'none' }
@@ -67,7 +67,9 @@ type ComputedShape =
 		price: number;
 	};
 
-const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60
+const UTC_PLUS_2_OFFSET_SEC = 2 * 60 * 60;
+// Для магнита смотрим только свежую часть графика (последние 100 свечей)
+const RECENT_CANDLES_LIMIT = 100;
 
 const props = defineProps<{
 	chart: IChartApi | null;
@@ -89,13 +91,27 @@ const emit = defineEmits<{
 const overlayRef = ref<SVGSVGElement | null>(null);
 const selectedId = ref<string | null>(null);
 const renderTick = ref<number>(0);
+const magnetTarget = ref<MagnetSnapTarget | null>(null);
+const focusedId = ref<string | null>(null);
 
 let dragState: DragMode = { type: 'none' };
 let rafId: number | null = null;
 
+const recentCandles = computed(() =>
+	props.candles.length > RECENT_CANDLES_LIMIT
+		? props.candles.slice(-RECENT_CANDLES_LIMIT)
+		: props.candles
+);
+
 const selectedDrawing = computed(
 	() => props.drawings.find((d) => d.id === selectedId.value) ?? null
 );
+
+function clearMagnetTarget() {
+	if (magnetTarget.value !== null) {
+		magnetTarget.value = null;
+	}
+}
 
 function bumpRender() {
 	if (rafId !== null) return;
@@ -141,19 +157,9 @@ function getLocalCoords(event: PointerEvent): { x: number; y: number } | null {
 	};
 }
 
-function pickPoint(event: PointerEvent): PriceTimePoint | null {
+function pickRawPoint(event: PointerEvent): PriceTimePoint | null {
 	const coords = getLocalCoords(event);
 	if (!coords) return null;
-
-	const snapped = resolvePointWithMagnet(coords.x, coords.y, {
-		enabled: props.magnetEnabled,
-		candles: props.candles,
-		priceToY,
-		yToPrice,
-		timeToX,
-		xToTime,
-	});
-	if (snapped) return snapped;
 
 	const rawPrice = yToPrice(coords.y);
 	if (rawPrice === null || !Number.isFinite(rawPrice)) return null;
@@ -169,6 +175,33 @@ function pickPoint(event: PointerEvent): PriceTimePoint | null {
 	}
 
 	return null;
+}
+
+function pickPoint(event: PointerEvent, useMagnet: boolean): PriceTimePoint | null {
+	if (!useMagnet || !props.magnetEnabled) {
+		clearMagnetTarget();
+		return pickRawPoint(event);
+	}
+
+	const coords = getLocalCoords(event);
+	if (!coords) return null;
+
+	const resolved = resolveMagnetState(coords.x, coords.y, {
+		enabled: props.magnetEnabled,
+		candles: recentCandles.value,
+		priceToY,
+		yToPrice,
+		timeToX,
+		xToTime,
+	});
+
+	if (resolved) {
+		magnetTarget.value = resolved.snapped ? resolved.target : null;
+		return resolved.point;
+	}
+
+	clearMagnetTarget();
+	return pickRawPoint(event);
 }
 
 function buildInitialStyle(kind: DrawingKind): DrawingObject['style'] {
@@ -191,7 +224,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 	if (event.button !== 0) return;
 	if (props.activeTool === 'none') return;
 
-	const point = pickPoint(event);
+	const point = pickPoint(event, true);
 	if (!point) return;
 
 	if (props.activeTool === 'ray') {
@@ -205,6 +238,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			style: buildInitialStyle('ray'),
 		};
 		selectedId.value = id;
+		clearMagnetTarget();
 		commitDrawings([...props.drawings, nextItem]);
 		emit('clear-tool');
 		return;
@@ -247,12 +281,19 @@ function handleOverlayPointerDown(event: PointerEvent) {
 }
 
 function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
+	let targetItem = item;
 	if (event.button !== 0) return;
-	if (props.activeTool !== 'none') return;
-	event.stopPropagation();
+	if (props.activeTool === 'none' && focusedId.value && focusedId.value !== item.id) {
+		const candidate = props.drawings.find((d) => d.id === focusedId.value);
+		if (candidate && (candidate.kind === 'segment' || candidate.kind === 'ray')) {
+			targetItem = candidate;
+		}
+	}
 
-	selectedId.value = item.id;
-	const point = pickPoint(event);
+	selectedId.value = targetItem.id;
+	focusedId.value = null;
+	// При захвате всей фигуры якорь берётся без магнита, чтобы не было прыжков в зоне свечей
+	const point = pickPoint(event, false);
 	if (!point) return;
 
 	if (item.kind === 'ray') {
@@ -302,13 +343,21 @@ function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject)
 
 function handlePointerMove(event: PointerEvent) {
 	if (dragState.type === 'none') {
+		if (props.activeTool !== 'none') {
+			focusedId.value = null;
+			pickPoint(event, true);
+		} else {
+			clearMagnetTarget();
+			const coords = getLocalCoords(event);
+			focusedId.value = coords ? findFocusedShapeId(coords.x, coords.y) : null;
+		}
 		syncChartCrosshair(event);
 		return;
 	}
-	const point = pickPoint(event);
-	if (!point) return;
 
 	if (dragState.type === 'draft-rect') {
+		const point = pickPoint(event, true);
+		if (!point) return;
 		const draftId = dragState.id;
 		commitDrawings(
 			props.drawings.map((d) => (d.id === draftId ? { ...d, end: point } : d))
@@ -317,6 +366,10 @@ function handlePointerMove(event: PointerEvent) {
 	}
 
 	if (dragState.type === 'draft-segment') {
+		// Сегмент строго горизонтальный и правый край не цепляется
+		clearMagnetTarget();
+		const point = pickPoint(event, false);
+		if (!point) return;
 		const draftId = dragState.id;
 		commitDrawings(
 			props.drawings.map((d) => {
@@ -333,7 +386,54 @@ function handlePointerMove(event: PointerEvent) {
 		return;
 	}
 
+	if (dragState.type === 'resize-rect-end') {
+		const point = pickPoint(event, true);
+		if (!point) return;
+		const targetId = dragState.id;
+		commitDrawings(
+			props.drawings.map((d) => {
+				if (d.id !== targetId || !d.end) return d;
+				return {
+					...d,
+					end: {
+						time: point.time,
+						price: d.end.price,
+					},
+				};
+			})
+		);
+		return;
+	}
+
+	if (dragState.type === 'resize-segment-end') {
+		// Правый край сегмента тянется свободно без магнита, сохраняя горизонтальность
+		clearMagnetTarget();
+		const point = pickPoint(event, false);
+		if (!point) return;
+		const targetId = dragState.id;
+		commitDrawings(
+			props.drawings.map((d) => {
+				if (d.id !== targetId) return d;
+				return {
+					...d,
+					end: {
+						time: point.time,
+						price: d.start.price,
+					},
+				};
+			})
+		);
+		return;
+	}
+
+	// Перемещение всей фигуры целиком — без магнита на точке захвата
+	clearMagnetTarget();
+	const point = pickPoint(event, false);
+	if (!point) return;
+
 	if (dragState.type === 'move-ray') {
+		const point = pickPoint(event, true);
+		if (!point) return;
 		const targetId = dragState.id;
 		const nextTime = Math.max(
 			1,
@@ -379,68 +479,69 @@ function handlePointerMove(event: PointerEvent) {
 	}
 
 	if (dragState.type === 'move-segment') {
+		const point = pickPoint(event, true);
+		if (!point) return;
 		const moveState = dragState;
 		const dt = Number(point.time) - Number(moveState.anchor.time);
 		const dp = point.price - moveState.anchor.price;
-		const nextPrice = moveState.origStart.price + dp;
+		const spanSec = Math.max(0, Number(moveState.origEnd.time) - Number(moveState.origStart.time));
+		const nextStartTime = Math.max(
+			1,
+			Math.floor(Number(moveState.origStart.time) + dt)
+		) as UTCTimestamp;
+		const nextEndTime = (Number(nextStartTime) + spanSec) as UTCTimestamp;
+		const nextPrice =
+			magnetTarget.value !== null ? magnetTarget.value.price : moveState.origStart.price + dp;
 
 		commitDrawings(
 			props.drawings.map((d) => {
 				if (d.id !== moveState.id) return d;
 				return {
 					...d,
-					start: {
-						time: Math.max(
-							1,
-							Math.floor(Number(moveState.origStart.time) + dt)
-						) as UTCTimestamp,
-						price: nextPrice,
-					},
-					end: {
-						time: Math.max(
-							1,
-							Math.floor(Number(moveState.origEnd.time) + dt)
-						) as UTCTimestamp,
-						price: nextPrice,
-					},
+					start: { time: nextStartTime, price: nextPrice },
+					end: { time: nextEndTime, price: nextPrice },
 				};
 			})
 		);
 		return;
 	}
+}
 
-	if (dragState.type === 'resize-rect-end') {
-		const targetId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== targetId || !d.end) return d;
-				return {
-					...d,
-					end: {
-						time: point.time,
-						price: d.end.price,
-					},
-				};
-			})
-		);
-		return;
+function findFocusedShapeId(x: number, y: number): string | null {
+	const lineToleranceY = 6;
+	const edgeToleranceX = 4;
+
+	let bestLineId: string | null = null;
+	let bestLineDist = Number.POSITIVE_INFINITY;
+
+	for (const shape of computedShapes.value) {
+		if (shape.kind === 'segment' || shape.kind === 'ray') {
+			const minX = Math.min(shape.x1, shape.x2) - edgeToleranceX;
+			const maxX = Math.max(shape.x1, shape.x2) + edgeToleranceX;
+			const dy = Math.abs(y - shape.y1);
+			if (x >= minX && x <= maxX && dy <= lineToleranceY && dy < bestLineDist) {
+				bestLineDist = dy;
+				bestLineId = shape.item.id;
+			}
+		}
 	}
 
-	if (dragState.type === 'resize-segment-end') {
-		const targetId = dragState.id;
-		commitDrawings(
-			props.drawings.map((d) => {
-				if (d.id !== targetId) return d;
-				return {
-					...d,
-					end: {
-						time: point.time,
-						price: d.start.price,
-					},
-				};
-			})
-		);
+	if (bestLineId) return bestLineId;
+
+	for (let i = computedShapes.value.length - 1; i >= 0; i -= 1) {
+		const shape = computedShapes.value[i];
+		if (!shape || shape.kind !== 'rectangle') continue;
+		if (
+			x >= shape.left - edgeToleranceX &&
+			x <= shape.left + shape.width + edgeToleranceX &&
+			y >= shape.top - edgeToleranceX &&
+			y <= shape.top + shape.height + edgeToleranceX
+		) {
+			return shape.item.id;
+		}
 	}
+
+	return null;
 }
 
 function handlePointerUp() {
@@ -448,6 +549,7 @@ function handlePointerUp() {
 		emit('clear-tool');
 	}
 	dragState = { type: 'none' };
+	clearMagnetTarget();
 }
 
 function syncChartCrosshair(event: PointerEvent) {
@@ -466,6 +568,8 @@ function syncChartCrosshair(event: PointerEvent) {
 }
 
 function clearChartCrosshair() {
+	clearMagnetTarget();
+	focusedId.value = null;
 	if (dragState.type === 'none') {
 		props.chart?.clearCrosshairPosition();
 	}
@@ -568,7 +672,15 @@ watch(
 	() => [props.chart, props.series, props.symbol],
 	() => {
 		selectedId.value = null;
+		clearMagnetTarget();
 		bumpRender();
+	}
+);
+
+watch(
+	() => props.magnetEnabled,
+	(enabled) => {
+		if (!enabled) clearMagnetTarget();
 	}
 );
 
@@ -604,15 +716,22 @@ onBeforeUnmount(() => {
 			<g v-for="shape in computedShapes" :key="shape.item.id" class="pointer-events-auto cursor-move"
 				@pointerdown="handleShapePointerDown($event, shape.item)">
 				<RayDrawing v-if="shape.kind === 'ray'" :item="shape.item" :x1="shape.x1" :y1="shape.y1" :x2="shape.x2"
-					:y2="shape.y2" @shape-pointer-down="handleShapePointerDown" />
+					:y2="shape.y2" @shape-pointer-down="handleShapePointerDown" :focused="focusedId === shape.item.id"/>
 
 				<SegmentDrawing v-else-if="shape.kind === 'segment'" :item="shape.item" :x1="shape.x1" :y1="shape.y1"
 					:x2="shape.x2" :end-x="shape.endX" :selected="selectedId === shape.item.id"
-					@shape-pointer-down="handleShapePointerDown" @right-handle-pointer-down="handleSegmentRightPointerDown" />
+					@shape-pointer-down="handleShapePointerDown" @right-handle-pointer-down="handleSegmentRightPointerDown" :focused="focusedId === shape.item.id"/>
 
 				<RectangleDrawing v-else :item="shape.item" :left="shape.left" :top="shape.top" :width="shape.width"
 					:height="shape.height" :selected="selectedId === shape.item.id" @shape-pointer-down="handleShapePointerDown"
 					@right-handle-pointer-down="handleRectRightEdgePointerDown" />
+			</g>
+
+			<!-- Индикатор магнитной привязки к H / L / C при наведении или протягивании конца -->
+			<g v-if="magnetTarget" class="pointer-events-none">
+				<circle :cx="magnetTarget.x" :cy="magnetTarget.y" r="7" fill="rgba(245, 158, 11, 0.16)"
+					stroke="#fbbf24" stroke-width="1.5" />
+				<circle :cx="magnetTarget.x" :cy="magnetTarget.y" r="2.2" fill="#fde68a" />
 			</g>
 		</svg>
 	</div>
