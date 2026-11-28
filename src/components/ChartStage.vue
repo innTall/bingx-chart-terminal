@@ -12,6 +12,7 @@ import {
 } from 'lightweight-charts';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DrawingObject, DrawingPreset } from '../types/drawings';
+import type { Timeframe } from '../config/watchlist';
 import type { Candle } from '../types/market';
 import { loadSavedBarSpacing, saveBarSpacing } from '../services/storage/terminalStorage';
 import ChartDrawingsOverlay from './ChartDrawingsOverlay.vue';
@@ -79,6 +80,7 @@ const props = defineProps<{
 	loading: boolean;
 	error: string | null;
 	symbol: string;
+	timeframe: Timeframe;
 	activeTool: DrawingToolType;
 	magnetEnabled: boolean;
 	drawings: readonly DrawingObject[];
@@ -251,8 +253,13 @@ async function captureScreenshot(): Promise<Blob> {
 	});
 }
 
+function clearDrawingSelection() {
+	drawingsOverlayRef.value?.clearSelection();
+}
+
 defineExpose({
 	captureScreenshot,
+	clearDrawingSelection,
 });
 
 onMounted(() => {
@@ -402,6 +409,7 @@ onBeforeUnmount(() => {
 	chartRef.value = null;
 	seriesRef.value = null;
 });
+
 </script>
 
 <template>
@@ -428,7 +436,7 @@ onBeforeUnmount(() => {
 		<div ref="containerRef" class="h-full min-h-0 w-full flex-1" />
 
 		<ChartDrawingsOverlay ref="drawingsOverlayRef" :chart="chartRef" :series="seriesRef" :candles="candles"
-			:symbol="symbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+			:symbol="symbol" :timeframe="timeframe" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 			:active-preset="activePreset ?? null" @save-preset="emit('save-preset', $event)"
 			@update:drawings="emit('update:drawings', $event)" @clear-tool="emit('clear-tool')" />
 	

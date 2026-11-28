@@ -28,6 +28,7 @@ import {
 } from '../services/storage/alertsStorage';
 import { playAlertSound } from '../utils/alertSound';
 import {
+	clearDrawingsForSymbol,
 	loadDrawingsForSymbol,
 	saveDrawingsForSymbol,
 } from '../services/storage/drawingsStorage';
@@ -107,6 +108,14 @@ function handleDrawingsUpdate(nextItems: DrawingObject[]) {
 	const symbolKey = activeSymbol.value;
 	drawings.value = nextItems;
 	saveDrawingsForSymbol(symbolKey, nextItems);
+}
+
+function handleClearDrawings() {
+	clearDrawingsForSymbol(activeSymbol.value);
+	drawings.value = [];
+	activeTool.value = 'none';
+	activePreset.value = null;
+	chartStageRef.value?.clearDrawingSelection();
 }
 
 function syncAlerts(nextItems: PriceAlert[]) {
@@ -491,7 +500,8 @@ onBeforeUnmount(() => {
 			:active-preset-id="activePreset?.id ?? null" @select-timeframe="activeTimeframe = $event"
 			@select-source="activeSource = $event" @select-tool="alertPlacing = false; activeTool = $event"
 			@select-preset="activePreset = $event" @delete-preset="handleDeletePreset"
-			@toggle-magnet="magnetEnabled = !magnetEnabled" @toggle-alert-placing="handleToggleAlertPlacing" 
+			@toggle-magnet="magnetEnabled = !magnetEnabled" @toggle-alert-placing="handleToggleAlertPlacing"
+			@clear-drawings="handleClearDrawings"
 			:capturing-screenshot="capturingScreenshot" @capture-screenshot="handleCaptureScreenshot" />
 
 		<div v-if="screenshotToast"
@@ -505,7 +515,7 @@ onBeforeUnmount(() => {
 		<main class="grid min-h-0 flex-1 grid-cols-1 gap-2.5 md:grid-cols-[1fr_180px]">
 			<section class="flex h-full min-h-0 flex-col">
 				<ChartStage ref="chartStageRef" :candles="candles" :latest-candle="latestCandle" :loading="loadingCandles" :error="candleError"
-					:symbol="activeSymbol" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
+					:symbol="activeSymbol" :timeframe="activeTimeframe" :active-tool="activeTool" :magnet-enabled="magnetEnabled" :drawings="drawings"
 					:active-preset="activePreset" :alerts="alerts" :alert-placing="alertPlacing" @save-preset="handleSavePreset"
 					@update:drawings="handleDrawingsUpdate" @clear-tool="activeTool = 'none'" @create-alert="handleCreateAlert"
 					@update-alert-price="handleUpdateAlertPrice" @delete-alert="deleteAlertById"

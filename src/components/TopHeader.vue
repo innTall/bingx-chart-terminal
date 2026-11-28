@@ -38,6 +38,7 @@ const emit = defineEmits<{
 	(e: 'toggle-magnet'): void;
 	(e: 'toggle-alert-placing'): void;
 	(e: 'capture-screenshot'): void;
+	(e: 'clear-drawings'): void;
 }>();
 
 const toolbarRef = ref<HTMLElement | null>(null);
@@ -202,6 +203,13 @@ onBeforeUnmount(() => {
 							: 'border-slate-700/80 bg-neutral-900/80 text-slate-400 hover:border-slate-600 hover:bg-neutral-800 hover:text-slate-200'
 						" @click="emit('toggle-alert-placing')">
 					<Bell class="h-3.5 w-3.5" />
+				</button>
+
+				<button type="button" title="Clear all drawings for this symbol"
+						aria-label="Clear all drawings for this symbol"
+						class="flex items-center justify-center rounded border border-slate-700/80 bg-neutral-900/80 px-2 py-1 text-slate-400 transition hover:border-rose-700/70 hover:bg-rose-950/40 hover:text-rose-300"
+						@click="emit('clear-drawings')">
+						<Trash2 class="h-3.5 w-3.5" />
 				</button>
 
 				<button type="button" title="Send chart screenshot to Telegram" aria-label="Send chart screenshot to Telegram"

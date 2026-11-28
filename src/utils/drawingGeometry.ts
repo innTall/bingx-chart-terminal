@@ -44,20 +44,22 @@ export function projectDrawings(
 	for (const item of drawings) {
 		const y1 = priceToY(item.start.price);
 		const x1 = timeToX(item.start.time);
-		if (y1 === null || x1 === null) continue;
+		if (y1 === null) continue;
 
 		if (item.kind === 'ray') {
+			const rayStartX = x1 ?? 0;
 			result.push({
 				item,
 				kind: 'ray',
-				x1,
+				x1: rayStartX,
 				y1,
-				x2: Math.max(x1, rightEdge),
+				x2: Math.max(rayStartX, rightEdge),
 				y2: y1,
 			});
 			continue;
 		}
 
+		if (x1 === null) continue;
 		const endPoint = item.end ?? item.start;
 		const x2 = timeToX(endPoint.time);
 		if (x2 === null) continue;

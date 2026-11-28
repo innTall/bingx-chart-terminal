@@ -2,6 +2,7 @@
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DrawingToolType } from './TopHeader.vue';
+import { TIMEFRAME_SECONDS, type Timeframe } from '../config/watchlist';
 import SegmentDrawing from './drawings/SegmentDrawing.vue';
 import RayDrawing from './drawings/RayDrawing.vue';
 import RectangleDrawing from './drawings/RectangleDrawing.vue';
@@ -38,6 +39,7 @@ const props = defineProps<{
 	series: ISeriesApi<'Candlestick'> | null;
 	candles: readonly Candle[];
 	symbol: string;
+	timeframe: Timeframe;
 	activeTool: DrawingToolType;
 	magnetEnabled: boolean;
 	drawings: readonly DrawingObject[];
@@ -92,7 +94,25 @@ function yToPrice(y: number): number | null {
 }
 
 function timeToX(time: UTCTimestamp): number | null {
-	return timeToCoordinate(props.chart, Number(time));
+	const lastCandle = props.candles[props.candles.length - 1];
+	if (lastCandle && Number(time) > lastCandle.time) {
+		const barsAfterLast =
+			(Number(time) - lastCandle.time) / TIMEFRAME_SECONDS[props.timeframe];
+		if (barsAfterLast > 5) return null;
+		const x = timeToCoordinate(props.chart, Number(time));
+		if (x !== null) return x;
+		const lastX = timeToCoordinate(props.chart, lastCandle.time);
+		const barSpacing = props.chart?.timeScale().options().barSpacing;
+		if (lastX === null || typeof barSpacing !== 'number') return null;
+		return lastX + barsAfterLast * barSpacing;
+	}
+
+	const x = timeToCoordinate(props.chart, Number(time));
+	if (x !== null) return x;
+	if (!lastCandle) return null;
+
+	// Historical timestamps outside the loaded data remain unprojected here.
+	return null;
 }
 
 function xToTime(x: number): UTCTimestamp | null {
@@ -117,11 +137,27 @@ function pickRawPoint(event: PointerEvent): PriceTimePoint | null {
 	if (rawPrice === null || !Number.isFinite(rawPrice)) return null;
 
 	const rawTime = xToTime(coords.x);
+	const isSegmentInteraction =
+		props.activeTool === 'segment' ||
+		dragState.type === 'draft-segment' ||
+		dragState.type === 'resize-segment-end' ||
+		dragState.type === 'move-segment';
+	const lastCandle = props.candles[props.candles.length - 1];
+	if (isSegmentInteraction && lastCandle) {
+		const lastX = timeToCoordinate(props.chart, lastCandle.time);
+		const barSpacing = props.chart?.timeScale().options().barSpacing;
+		if (lastX !== null && coords.x > lastX && typeof barSpacing === 'number' && barSpacing > 0) {
+			const barsAfterLast = Math.min(5, (coords.x - lastX) / barSpacing);
+			return {
+				time: (lastCandle.time + barsAfterLast * TIMEFRAME_SECONDS[props.timeframe]) as UTCTimestamp,
+				price: rawPrice,
+			};
+		}
+	}
 	if (rawTime !== null) {
 		return { time: rawTime, price: rawPrice };
 	}
 
-	const lastCandle = props.candles[props.candles.length - 1];
 	if (lastCandle) {
 		return { time: lastCandle.time as UTCTimestamp, price: rawPrice };
 	}
@@ -187,6 +223,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			symbol: props.symbol,
 			kind: 'ray',
 			start: point,
+			sourceTimeframe: props.timeframe,
 			style: buildInitialStyle('ray'),
 		};
 		selectedId.value = id;
@@ -205,6 +242,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			kind: 'rectangle',
 			start: point,
 			end: point,
+			sourceTimeframe: props.timeframe,
 			style: buildInitialStyle('rectangle'),
 		};
 		selectedId.value = id;
@@ -223,6 +261,7 @@ function handleOverlayPointerDown(event: PointerEvent) {
 			kind: 'segment',
 			start: point,
 			end: { time: point.time, price: point.price },
+			sourceTimeframe: props.timeframe,
 			style: buildInitialStyle('segment'),
 		};
 		selectedId.value = id;
@@ -369,9 +408,14 @@ function handlePointerMove(event: PointerEvent) {
 
 function applyDragUpdate(point: PriceTimePoint, snappedPrice?: number) {
 	const mode = dragState;
+	const lastCandle = props.candles[props.candles.length - 1];
+	const maxSegmentTime = lastCandle
+		? lastCandle.time + TIMEFRAME_SECONDS[props.timeframe] * 5
+		: undefined;
 	commitDrawings(
 		props.drawings.map(
-			(drawing) => updateDrawingForDrag(drawing, mode, point, snappedPrice) ?? drawing
+			(drawing) =>
+				updateDrawingForDrag(drawing, mode, point, snappedPrice, maxSegmentTime) ?? drawing
 		)
 	);
 }
@@ -443,7 +487,12 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 
 	const fullWidth = overlayRef.value?.clientWidth ?? 800;
 	const paneWidth = props.chart?.timeScale().width() ?? fullWidth;
-	return projectDrawings(props.drawings, {
+	const currentSeconds = TIMEFRAME_SECONDS[props.timeframe];
+	const visibleDrawings = props.drawings.filter((drawing) => {
+		if (!drawing.sourceTimeframe) return true;
+		return currentSeconds <= TIMEFRAME_SECONDS[drawing.sourceTimeframe];
+	});
+	return projectDrawings(visibleDrawings, {
 		timeToX,
 		priceToY,
 		rightEdge: Math.max(0, paneWidth),
@@ -451,7 +500,7 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 });
 
 watch(
-	() => [props.chart, props.series, props.symbol],
+	() => [props.chart, props.series, props.symbol, props.timeframe],
 	() => {
 		selectedId.value = null;
 		focusedId.value = null;

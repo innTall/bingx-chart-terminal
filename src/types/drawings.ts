@@ -1,4 +1,5 @@
 import type { UTCTimestamp } from 'lightweight-charts';
+import type { Timeframe } from '../config/watchlist';
 
 export type DrawingKind = 'ray' | 'rectangle' | 'segment';
 
@@ -17,6 +18,8 @@ export interface DrawingObject {
   id: string;
   symbol: string;
   kind: DrawingKind;
+  /** Timeframe the drawing was created on; omitted only for legacy saved drawings. */
+  sourceTimeframe?: Timeframe;
   /** Для луча и отрезка — опорная точка; для прямоугольника — первый угол (t1, p1) */
   start: PriceTimePoint;
   /** Для прямоугольника — второй угол (t2, p2); для отрезка — конечная точка (t2, price) */

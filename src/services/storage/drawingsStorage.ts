@@ -1,4 +1,5 @@
 import type { DrawingObject } from '../../types/drawings';
+import { TIMEFRAMES } from '../../config/watchlist';
 
 const LS_PREFIX = 'rm_chart:drawings:v1:';
 const MAX_OBJECTS_PER_SYMBOL = 20;
@@ -26,6 +27,7 @@ function hasLabel(item: unknown): item is DrawingObject {
 	}
 
 	const style = item.style;
+	const sourceTimeframe = item.sourceTimeframe;
 	return (
 		typeof item.id === 'string' &&
 		item.id.length > 0 &&
@@ -33,6 +35,9 @@ function hasLabel(item: unknown): item is DrawingObject {
 		item.symbol.length > 0 &&
 		isPriceTimePoint(item.start) &&
 		(item.end === undefined || isPriceTimePoint(item.end)) &&
+		(sourceTimeframe === undefined ||
+			(typeof sourceTimeframe === 'string' &&
+				TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]))) &&
 		typeof style.color === 'string' &&
 		style.color.length > 0 &&
 		typeof style.lineWidth === 'number' &&
@@ -70,5 +75,13 @@ export function saveDrawingsForSymbol(symbol: string, items: readonly DrawingObj
 		window.localStorage.setItem(getStorageKey(symbol), JSON.stringify(bounded));
 	} catch {
 		// Игнорируем возможные ошибки записи в localStorage (например, квота)
+	}
+}
+
+export function clearDrawingsForSymbol(symbol: string): void {
+	try {
+		window.localStorage.removeItem(getStorageKey(symbol));
+	} catch {
+		// Keep the active chart responsive if localStorage is unavailable.
 	}
 }

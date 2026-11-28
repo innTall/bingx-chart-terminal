@@ -31,7 +31,8 @@ export function updateDrawingForDrag(
 	drawing: DrawingObject,
 	mode: DragMode,
 	point: PriceTimePoint,
-	snappedPrice?: number
+	snappedPrice?: number,
+	maxSegmentTime?: number
 ): DrawingObject | null {
 	if (mode.type === 'none') return null;
 	if (drawing.id !== mode.id) return null;
@@ -40,7 +41,15 @@ export function updateDrawingForDrag(
 		case 'draft-rect':
 			return { ...drawing, end: point };
 		case 'draft-segment':
-			return { ...drawing, end: { time: point.time, price: mode.start.price } };
+			return {
+				...drawing,
+				end: {
+					time: (maxSegmentTime === undefined
+						? Number(point.time)
+						: Math.min(Number(point.time), maxSegmentTime)) as UTCTimestamp,
+					price: mode.start.price,
+				},
+			};
 		case 'resize-rect-end':
 			if (!drawing.end) return null;
 			return {
@@ -50,7 +59,12 @@ export function updateDrawingForDrag(
 		case 'resize-segment-end':
 			return {
 				...drawing,
-				end: { time: point.time, price: drawing.start.price },
+				end: {
+					time: (maxSegmentTime === undefined
+						? Number(point.time)
+						: Math.min(Number(point.time), maxSegmentTime)) as UTCTimestamp,
+					price: drawing.start.price,
+				},
 			};
 		case 'move-ray':
 			return {
@@ -81,7 +95,12 @@ export function updateDrawingForDrag(
 				0,
 				Number(mode.origEnd.time) - Number(mode.origStart.time)
 			);
-			const startTime = boundedTime(Number(mode.origStart.time) + dt);
+			const maxStartTime =
+				maxSegmentTime === undefined ? Number.POSITIVE_INFINITY : maxSegmentTime - spanSec;
+			const startTime = Math.min(
+				boundedTime(Number(mode.origStart.time) + dt),
+				maxStartTime
+			) as UTCTimestamp;
 			const nextPrice = snappedPrice ?? mode.origStart.price + point.price - mode.anchor.price;
 			return {
 				...drawing,
