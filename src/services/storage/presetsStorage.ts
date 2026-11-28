@@ -1,14 +1,19 @@
 import type { DrawingKind, DrawingPreset } from '../../types/drawings';
 
 const PRESETS_STORAGE_KEY = 'rm_chart:drawing_presets:v2';
-const VALID_KINDS: ReadonlySet<string> = new Set(['segment', 'ray', 'rectangle']);
+const VALID_KINDS: ReadonlySet<string> = new Set(['segment', 'ray', 'rectangle', 'fibo']);
 
-export function formatDefaultPresetName(kind: DrawingKind, timeframe: string): string {
-  const kindMap: Record<DrawingKind, string> = {
+export function formatDefaultPresetName(
+  kind: DrawingKind,
+  timeframe: string,
+  direction?: 'up' | 'down'
+): string {
+  const kindMap: Record<Exclude<DrawingKind, 'fibo'>, string> = {
     segment: 'Seg',
     ray: 'Ray',
     rectangle: 'Rect',
   };
+  if (kind === 'fibo') return `DR${direction === 'down' ? 'down' : 'up'} ${timeframe}`;
   return `${kindMap[kind]} ${timeframe}`;
 }
 
@@ -24,11 +29,14 @@ export function loadDrawingPresets(): DrawingPreset[] {
     for (const entry of parsed) {
       if (!entry || typeof entry !== 'object') continue;
       const row = entry as Record<string, unknown>;
+      const directionIsValid =
+        row.kind !== 'fibo' || row.direction === 'up' || row.direction === 'down';
       if (
         typeof row.id === 'string' &&
         typeof row.name === 'string' &&
         typeof row.kind === 'string' &&
         VALID_KINDS.has(row.kind) &&
+        directionIsValid &&
         typeof row.color === 'string' &&
         typeof row.lineWidth === 'number' &&
         Number.isFinite(row.lineWidth) &&
@@ -38,6 +46,9 @@ export function loadDrawingPresets(): DrawingPreset[] {
           id: row.id,
           name: row.name,
           kind: row.kind as DrawingKind,
+          ...(row.kind === 'fibo'
+            ? { direction: row.direction === 'down' ? 'down' : 'up' }
+            : {}),
           color: row.color,
           lineWidth: row.lineWidth,
           label: typeof row.label === 'string' ? row.label : row.name,

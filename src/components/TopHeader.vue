@@ -5,10 +5,10 @@ import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
 
 export type DataSourceType = 'bingx' | 'oanda';
-export type DrawingToolType = 'none' | 'segment' | 'ray' | 'rectangle';
+export type DrawingToolType = 'none' | 'segment' | 'ray' | 'rectangle' | 'fibo-up' | 'fibo-down';
 
 const TOOL_CONFIG: ReadonlyArray<{
-	kind: DrawingKind;
+	kind: Exclude<DrawingKind, 'fibo'>;
 	label: string;
 }> = [
 		{ kind: 'segment', label: 'Segment' },
@@ -48,7 +48,7 @@ function presetsByKind(kind: DrawingKind): DrawingPreset[] {
 	return props.presets.filter((p) => p.kind === kind);
 }
 
-function handleDraftClick(target: DrawingKind) {
+function handleDraftClick(target: DrawingToolType) {
 	openMenuKind.value = null;
 	emit('select-preset', null);
 	if (props.activeTool === target && props.activePresetId === null) {
@@ -65,7 +65,20 @@ function togglePresetMenu(kind: DrawingKind) {
 function handlePickPreset(preset: DrawingPreset) {
 	openMenuKind.value = null;
 	emit('select-preset', preset);
-	emit('select-tool', preset.kind);
+	emit(
+		'select-tool',
+		preset.kind === 'fibo' ? `fibo-${preset.direction ?? 'up'}` : preset.kind
+	);
+}
+
+function selectFiboDirection(direction: 'up' | 'down') {
+	openMenuKind.value = null;
+	emit('select-preset', null);
+	const tool: DrawingToolType = direction === 'up' ? 'fibo-up' : 'fibo-down';
+	emit(
+		'select-tool',
+		props.activeTool === tool && props.activePresetId === null ? 'none' : tool
+	);
 }
 
 function handleDocumentPointerDown(event: PointerEvent) {
@@ -163,7 +176,7 @@ onBeforeUnmount(() => {
 
 					<!-- Выпадающий список пресетов -->
 					<div v-if="openMenuKind === tool.kind"
-						class="absolute left-0 top-full z-30 mt-1.5 min-w-42 rounded border border-slate-700 bg-[#161616] py-1 shadow-lg">
+						class="absolute left-0 top-full z-30 mt-1.5 max-h-64 min-w-42 overflow-y-auto rounded border border-slate-700 bg-[#161616] py-1 shadow-lg">
 						<div v-if="presetsByKind(tool.kind).length === 0" class="px-2.5 py-1.5 text-[11px] text-slate-500">
 							No saved presets
 						</div>
@@ -178,6 +191,47 @@ onBeforeUnmount(() => {
 								<span class="truncate">{{ p.name }}</span>
 							</button>
 
+							<button type="button" title="Delete preset"
+								class="shrink-0 rounded p-0.5 text-slate-500 transition hover:bg-rose-950/60 hover:text-rose-400"
+								@click.stop="emit('delete-preset', p.id)">
+								<Trash2 class="h-3 w-3" />
+							</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="relative flex items-center rounded border border-slate-700/80 bg-neutral-900/80">
+					<button type="button" aria-label="Draw Fibo up range" title="DRup (two clicks)"
+						class="rounded-l px-2 py-1 font-medium transition"
+						:class="activeTool === 'fibo-up' ? 'bg-rose-500/20 text-rose-200' : 'text-slate-300 hover:bg-neutral-800'"
+						@click="selectFiboDirection('up')">
+						DRup
+					</button>
+					<button type="button" aria-label="Draw Fibo down range" title="DRdown (two clicks)"
+						class="border-l border-slate-700/80 px-2 py-1 font-medium transition"
+						:class="activeTool === 'fibo-down' ? 'bg-emerald-500/20 text-emerald-200' : 'text-slate-300 hover:bg-neutral-800'"
+						@click="selectFiboDirection('down')">
+						DRdown
+					</button>
+					<button type="button" aria-label="Fibo presets" :aria-expanded="openMenuKind === 'fibo'"
+						class="rounded-r border-l border-slate-700/80 px-1 py-1 text-slate-400 transition hover:bg-neutral-800 hover:text-slate-200"
+						@click.stop="togglePresetMenu('fibo')">
+						<ChevronDown class="h-3.5 w-3.5" :class="openMenuKind === 'fibo' ? 'rotate-180' : ''" />
+					</button>
+					<div v-if="openMenuKind === 'fibo'"
+						class="absolute left-0 top-full z-30 mt-1.5 max-h-64 min-w-42 overflow-y-auto rounded border border-slate-700 bg-[#161616] py-1 shadow-lg">
+						<div v-if="presetsByKind('fibo').length === 0" class="px-2.5 py-1.5 text-[11px] text-slate-500">
+							No saved presets
+						</div>
+						<div v-for="p in presetsByKind('fibo')" :key="p.id"
+							class="flex items-center justify-between gap-2 px-2 py-1 text-xs transition hover:bg-neutral-800/90"
+							:class="activePresetId === p.id ? 'bg-amber-500/15 text-amber-200' : 'text-slate-200'">
+							<button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-left"
+								@click="handlePickPreset(p)">
+								<span class="h-2.5 w-2.5 shrink-0 rounded-full border border-white/20"
+									:style="{ backgroundColor: p.color }" />
+								<span class="truncate">{{ p.name }}</span>
+							</button>
 							<button type="button" title="Delete preset"
 								class="shrink-0 rounded p-0.5 text-slate-500 transition hover:bg-rose-950/60 hover:text-rose-400"
 								@click.stop="emit('delete-preset', p.id)">

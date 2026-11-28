@@ -6,12 +6,14 @@ import { TIMEFRAME_SECONDS, type Timeframe } from '../config/watchlist';
 import SegmentDrawing from './drawings/SegmentDrawing.vue';
 import RayDrawing from './drawings/RayDrawing.vue';
 import RectangleDrawing from './drawings/RectangleDrawing.vue';
+import FiboDrawing from './drawings/FiboDrawing.vue';
 import DrawingStyleToolbar from './drawings/DrawingStyleToolbar.vue';
 import {
 	DEFAULT_DRAWING_STYLE,
 	type DrawingKind,
 	type DrawingObject,
 	type DrawingPreset,
+	type FiboDirection,
 	type PriceTimePoint,
 } from '../types/drawings';
 import type { Candle } from '../types/market';
@@ -57,6 +59,11 @@ const selectedId = ref<string | null>(null);
 const renderTick = ref<number>(0);
 const magnetTarget = ref<MagnetSnapTarget | null>(null);
 const focusedId = ref<string | null>(null);
+const pendingFiboStart = ref<{
+	point: PriceTimePoint;
+	direction: FiboDirection;
+	style: DrawingObject['style'];
+} | null>(null);
 
 let dragState: DragMode = { type: 'none' };
 let rafId: number | null = null;
@@ -302,6 +309,41 @@ function handleOverlayPointerDown(event: PointerEvent) {
 	const point = pickPoint(event, true);
 	if (!point) return;
 
+	if (props.activeTool === 'fibo-up' || props.activeTool === 'fibo-down') {
+		if (!pendingFiboStart.value) {
+			if (props.drawings.length >= 20) return;
+			const direction = props.activeTool === 'fibo-up' ? 'up' : 'down';
+			pendingFiboStart.value = {
+				point,
+				direction,
+				style: buildInitialStyle('fibo'),
+			};
+			return;
+		}
+
+		const pending = pendingFiboStart.value;
+		pendingFiboStart.value = null;
+		const label =
+			pending.style.label.trim() ||
+			`DR${pending.direction === 'up' ? 'up' : 'down'} ${props.timeframe}`;
+		const id = `fibo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+		const nextItem: DrawingObject = {
+			id,
+			symbol: props.symbol,
+			kind: 'fibo',
+			direction: pending.direction,
+			start: pending.point,
+			end: point,
+			sourceTimeframe: props.timeframe,
+			style: { ...pending.style, label },
+		};
+		selectedId.value = id;
+		clearMagnetTarget();
+		commitDrawings([...props.drawings, nextItem]);
+		emit('clear-tool');
+		return;
+	}
+
 	if (props.activeTool === 'ray') {
 		if (props.drawings.length >= 20) return;
 		const id = `ray_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -384,7 +426,10 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 			offsetTime: Number(targetItem.start.time) - Number(point.time),
 			offsetPrice: targetItem.start.price - point.price,
 		};
-	} else if (targetItem.kind === 'rectangle' && targetItem.end) {
+	} else if (
+		(targetItem.kind === 'rectangle' || targetItem.kind === 'fibo') &&
+		targetItem.end
+	) {
 		dragState = {
 			type: 'move-rect',
 			id: targetItem.id,
@@ -583,6 +628,9 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 	const paneWidth = props.chart?.timeScale().width() ?? fullWidth;
 	const currentSeconds = TIMEFRAME_SECONDS[props.timeframe];
 	const visibleDrawings = props.drawings.filter((drawing) => {
+		if (drawing.kind === 'fibo') {
+			return drawing.sourceTimeframe === props.timeframe;
+		}
 		if (!drawing.sourceTimeframe) return true;
 		return currentSeconds <= TIMEFRAME_SECONDS[drawing.sourceTimeframe];
 	});
@@ -603,9 +651,22 @@ watch(
 	() => {
 		selectedId.value = null;
 		focusedId.value = null;
+		pendingFiboStart.value = null;
 		dragState = { type: 'none' };
 		clearMagnetTarget();
 		bumpRender();
+	}
+);
+
+watch(
+	() => props.activeTool,
+	(tool) => {
+		if (
+			pendingFiboStart.value &&
+			tool !== `fibo-${pendingFiboStart.value.direction}`
+		) {
+			pendingFiboStart.value = null;
+		}
 	}
 );
 
@@ -651,7 +712,7 @@ onBeforeUnmount(() => {
 		<!-- Компактная панель свойств выбранного элемента -->
 		<DrawingStyleToolbar v-if="selectedDrawing" :drawing="selectedDrawing" @update-style="updateSelectedStyle"
 			@save-preset="saveSelectedAsPreset" @delete="deleteSelected" />
-		<!-- SVG-слой для Луча, Отрезка и Прямоугольника -->
+		<!-- SVG overlay for rays, segments, rectangles, and Fibo ranges -->
 		<svg ref="overlayRef" class="h-full w-full"
 			:class="activeTool !== 'none' ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'"
 			@pointerdown="handleOverlayPointerDown" @pointermove="handlePointerMove" @pointerup="handlePointerUp"
@@ -664,9 +725,13 @@ onBeforeUnmount(() => {
 					:x2="shape.x2" :end-x="shape.endX" :selected="selectedId === shape.item.id"
 					@shape-pointer-down="handleShapePointerDown" @right-handle-pointer-down="handleSegmentRightPointerDown" :focused="focusedId === shape.item.id"/>
 
-				<RectangleDrawing v-else :item="shape.item" :left="shape.left" :top="shape.top" :width="shape.width"
+				<RectangleDrawing v-else-if="shape.kind === 'rectangle'" :item="shape.item" :left="shape.left" :top="shape.top" :width="shape.width"
 					:height="shape.height" :selected="selectedId === shape.item.id" @shape-pointer-down="handleShapePointerDown"
 					@right-handle-pointer-down="handleRectRightEdgePointerDown" />
+
+				<FiboDrawing v-else-if="shape.kind === 'fibo'" :item="shape.item" :left="shape.left"
+					:right="shape.right" :y-top="shape.yTop" :y-mid="shape.yMid" :y-bottom="shape.yBottom"
+					:ray-end="shape.rayEnd" @shape-pointer-down="handleShapePointerDown" />
 			</g>
 
 			<!-- Индикатор магнитной привязки к H / L / C при наведении или протягивании конца -->

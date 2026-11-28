@@ -22,12 +22,24 @@ function isPriceTimePoint(value: unknown): boolean {
 
 function hasLabel(item: unknown): item is DrawingObject {
 	if (!isRecord(item) || !isRecord(item.style)) return false;
-	if (item.kind !== 'ray' && item.kind !== 'rectangle' && item.kind !== 'segment') {
+	if (
+		item.kind !== 'ray' &&
+		item.kind !== 'rectangle' &&
+		item.kind !== 'segment' &&
+		item.kind !== 'fibo'
+	) {
 		return false;
 	}
 
 	const style = item.style;
 	const sourceTimeframe = item.sourceTimeframe;
+	const validDirection =
+		item.kind !== 'fibo' || item.direction === 'up' || item.direction === 'down';
+	const validFiboAnchors =
+		item.kind !== 'fibo' ||
+		(item.end !== undefined &&
+			typeof sourceTimeframe === 'string' &&
+			TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]));
 	return (
 		typeof item.id === 'string' &&
 		item.id.length > 0 &&
@@ -35,6 +47,8 @@ function hasLabel(item: unknown): item is DrawingObject {
 		item.symbol.length > 0 &&
 		isPriceTimePoint(item.start) &&
 		(item.end === undefined || isPriceTimePoint(item.end)) &&
+		validDirection &&
+		validFiboAnchors &&
 		(sourceTimeframe === undefined ||
 			(typeof sourceTimeframe === 'string' &&
 				TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]))) &&

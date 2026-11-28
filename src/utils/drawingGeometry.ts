@@ -27,6 +27,16 @@ export type ProjectedDrawing =
 			x2: number;
 			endX: number;
 			price: number;
+	  }
+	| {
+			item: DrawingObject;
+			kind: 'fibo';
+			left: number;
+			right: number;
+			yTop: number;
+			yMid: number;
+			yBottom: number;
+			rayEnd: number;
 	  };
 
 export interface DrawingProjection {
@@ -73,6 +83,32 @@ export function projectDrawings(
 		}
 
 		const endPoint = item.end ?? item.start;
+
+		if (item.kind === 'fibo') {
+			if (x1 === null) continue;
+			const x2 = timeToX(endPoint.time);
+			if (x2 === null) continue;
+			const minX = Math.min(x1, x2);
+			const maxX = Math.max(x1, x2);
+			if (maxX < leftEdge || minX > rightEdge) continue;
+			const topPrice = Math.max(item.start.price, endPoint.price);
+			const bottomPrice = Math.min(item.start.price, endPoint.price);
+			const yTop = priceToY(topPrice);
+			const yBottom = priceToY(bottomPrice);
+			const yMid = priceToY((topPrice + bottomPrice) / 2);
+			if (yTop === null || yBottom === null || yMid === null) continue;
+			result.push({
+				item,
+				kind: 'fibo',
+				left: Math.max(leftEdge, Math.min(rightEdge, minX)),
+				right: Math.max(leftEdge, Math.min(rightEdge, maxX)),
+				yTop,
+				yMid,
+				yBottom,
+				rayEnd: rightEdge,
+			});
+			continue;
+		}
 
 		if (item.kind === 'segment') {
 			const startX = segmentStartX
@@ -128,10 +164,19 @@ export function findFocusedDrawingId(
 	let bestLineDist = Number.POSITIVE_INFINITY;
 
 	for (const shape of shapes) {
-		if (shape.kind !== 'segment' && shape.kind !== 'ray') continue;
-		const minX = Math.min(shape.x1, shape.x2) - edgeToleranceX;
-		const maxX = Math.max(shape.x1, shape.x2) + edgeToleranceX;
-		const dy = Math.abs(y - shape.y1);
+		if (
+			shape.kind !== 'segment' &&
+			shape.kind !== 'ray' &&
+			shape.kind !== 'fibo'
+		) {
+			continue;
+		}
+		const x1 = shape.kind === 'fibo' ? shape.left : shape.x1;
+		const x2 = shape.kind === 'fibo' ? shape.rayEnd : shape.x2;
+		const lineY = shape.kind === 'fibo' ? shape.yMid : shape.y1;
+		const minX = Math.min(x1, x2) - edgeToleranceX;
+		const maxX = Math.max(x1, x2) + edgeToleranceX;
+		const dy = Math.abs(y - lineY);
 		if (x >= minX && x <= maxX && dy <= lineToleranceY && dy < bestLineDist) {
 			bestLineDist = dy;
 			bestLineId = shape.item.id;
@@ -142,7 +187,19 @@ export function findFocusedDrawingId(
 
 	for (let i = shapes.length - 1; i >= 0; i -= 1) {
 		const shape = shapes[i];
-		if (!shape || shape.kind !== 'rectangle') continue;
+		if (!shape) continue;
+		if (shape.kind === 'fibo') {
+			if (
+				x >= shape.left - edgeToleranceX &&
+				x <= shape.right + edgeToleranceX &&
+				y >= Math.min(shape.yTop, shape.yBottom) - edgeToleranceX &&
+				y <= Math.max(shape.yTop, shape.yBottom) + edgeToleranceX
+			) {
+				return shape.item.id;
+			}
+			continue;
+		}
+		if (shape.kind !== 'rectangle') continue;
 		if (
 			x >= shape.left - edgeToleranceX &&
 			x <= shape.left + shape.width + edgeToleranceX &&

@@ -273,12 +273,17 @@ function handleSavePreset(drawing: DrawingObject) {
 	const resolvedName =
 		customText.length > 0
 			? customText
-			: formatDefaultPresetName(drawing.kind, activeTimeframe.value);
+			: formatDefaultPresetName(
+					drawing.kind,
+					activeTimeframe.value,
+					drawing.direction
+				);
 
 	const newPreset: DrawingPreset = {
 		id: `preset_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
 		name: resolvedName,
 		kind: drawing.kind,
+		...(drawing.kind === 'fibo' ? { direction: drawing.direction } : {}),
 		color: drawing.style.color,
 		lineWidth: drawing.style.lineWidth,
 		label: customText || resolvedName,
