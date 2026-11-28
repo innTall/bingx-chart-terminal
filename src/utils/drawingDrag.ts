@@ -21,7 +21,18 @@ export type DragMode =
 			origEnd: PriceTimePoint;
 	  }
 	| { type: 'resize-rect-end'; id: string }
-	| { type: 'resize-segment-end'; id: string };
+	| { type: 'resize-segment-end'; id: string }
+	| {
+			type: 'move-buy-sell';
+			id: string;
+			anchor: PriceTimePoint;
+			origStart: PriceTimePoint;
+			origEnd: PriceTimePoint;
+			origTargetPrice: number;
+			origStopPrice: number;
+	  }
+	| { type: 'resize-buy-sell-level'; id: string; level: 'top' | 'bottom' }
+	| { type: 'resize-buy-sell-width'; id: string };
 
 function boundedTime(time: number): UTCTimestamp {
 	return Math.max(1, Math.floor(time)) as UTCTimestamp;
@@ -64,6 +75,60 @@ export function updateDrawingForDrag(
 						? Number(point.time)
 						: Math.min(Number(point.time), maxSegmentTime)) as UTCTimestamp,
 					price: drawing.start.price,
+				},
+			};
+		case 'move-buy-sell': {
+			if (
+				drawing.kind !== 'buy_sell' ||
+				drawing.targetPrice === undefined ||
+				drawing.stopPrice === undefined
+			) {
+				return null;
+			}
+			const dt = Number(point.time) - Number(mode.anchor.time);
+			const dp = point.price - mode.anchor.price;
+			const startTime = boundedTime(Number(mode.origStart.time) + dt);
+			return {
+				...drawing,
+				start: { time: startTime, price: mode.origStart.price + dp },
+				end: {
+					time: boundedTime(Number(mode.origEnd.time) + dt),
+					price: mode.origEnd.price + dp,
+				},
+				targetPrice: mode.origTargetPrice + dp,
+				stopPrice: mode.origStopPrice + dp,
+			};
+		}
+		case 'resize-buy-sell-level': {
+			if (
+				drawing.kind !== 'buy_sell' ||
+				drawing.targetPrice === undefined ||
+				drawing.stopPrice === undefined
+			) {
+				return null;
+			}
+			const side = drawing.side ?? 'buy';
+			const updatesTarget =
+				mode.level === 'top' ? side === 'buy' : side === 'sell';
+			const targetIsAboveEntry = side === 'buy';
+			const isLevelAboveEntry = updatesTarget
+				? targetIsAboveEntry
+				: !targetIsAboveEntry;
+			const minDistance = Math.max(Math.abs(drawing.start.price) * 1e-8, Number.EPSILON);
+			const price = isLevelAboveEntry
+				? Math.max(drawing.start.price + minDistance, point.price)
+				: Math.min(drawing.start.price - minDistance, point.price);
+			return updatesTarget
+				? { ...drawing, targetPrice: price }
+				: { ...drawing, stopPrice: price };
+		}
+		case 'resize-buy-sell-width':
+			if (drawing.kind !== 'buy_sell' || !drawing.end) return null;
+			return {
+				...drawing,
+				end: {
+					time: Math.max(Number(drawing.start.time) + 1, Number(point.time)) as UTCTimestamp,
+					price: drawing.end.price,
 				},
 			};
 		case 'move-ray':

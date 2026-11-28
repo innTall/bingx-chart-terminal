@@ -37,6 +37,20 @@ export type ProjectedDrawing =
 			yMid: number;
 			yBottom: number;
 			rayEnd: number;
+	  }
+	| {
+			item: DrawingObject;
+			kind: 'buy_sell';
+			left: number;
+			right: number;
+			yEntry: number;
+			yTarget: number;
+			yStop: number;
+			yTop: number;
+			yBottom: number;
+			entryPrice: number;
+			targetPrice: number;
+			stopPrice: number;
 	  };
 
 export interface DrawingProjection {
@@ -47,6 +61,8 @@ export interface DrawingProjection {
 	projectedStartTime?: (item: DrawingObject) => PriceTimePoint['time'];
 	segmentStartX?: (item: DrawingObject, startTime: PriceTimePoint['time']) => number | null;
 	segmentEndX?: (item: DrawingObject, endTime: PriceTimePoint['time']) => number | null;
+	buySellStartX?: (item: DrawingObject, startTime: PriceTimePoint['time']) => number | null;
+	buySellEndX?: (item: DrawingObject, endTime: PriceTimePoint['time']) => number | null;
 }
 
 export function projectDrawings(
@@ -59,6 +75,8 @@ export function projectDrawings(
 		projectedStartTime,
 		segmentStartX,
 		segmentEndX,
+		buySellStartX,
+		buySellEndX,
 	}: DrawingProjection
 ): ProjectedDrawing[] {
 	const result: ProjectedDrawing[] = [];
@@ -83,6 +101,41 @@ export function projectDrawings(
 		}
 
 		const endPoint = item.end ?? item.start;
+
+		if (item.kind === 'buy_sell') {
+			if (
+				!endPoint ||
+				item.targetPrice === undefined ||
+				item.stopPrice === undefined
+			) {
+				continue;
+			}
+			const startX = buySellStartX?.(item, item.start.time) ?? x1;
+			const endX = buySellEndX?.(item, endPoint.time) ?? timeToX(endPoint.time);
+			const yEntry = priceToY(item.start.price);
+			const yTarget = priceToY(item.targetPrice);
+			const yStop = priceToY(item.stopPrice);
+			if (startX === null || endX === null || yEntry === null || yTarget === null || yStop === null) {
+				continue;
+			}
+			const left = Math.max(leftEdge, Math.min(rightEdge, Math.min(startX, endX)));
+			const right = Math.max(leftEdge, Math.min(rightEdge, Math.max(startX, endX)));
+			result.push({
+				item,
+				kind: 'buy_sell',
+				left,
+				right,
+				yEntry,
+				yTarget,
+				yStop,
+				yTop: Math.min(yEntry, yTarget, yStop),
+				yBottom: Math.max(yEntry, yTarget, yStop),
+				entryPrice: item.start.price,
+				targetPrice: item.targetPrice,
+				stopPrice: item.stopPrice,
+			});
+			continue;
+		}
 
 		if (item.kind === 'fibo') {
 			if (x1 === null) continue;
@@ -167,13 +220,14 @@ export function findFocusedDrawingId(
 		if (
 			shape.kind !== 'segment' &&
 			shape.kind !== 'ray' &&
-			shape.kind !== 'fibo'
+			shape.kind !== 'fibo' &&
+			shape.kind !== 'buy_sell'
 		) {
 			continue;
 		}
-		const x1 = shape.kind === 'fibo' ? shape.left : shape.x1;
-		const x2 = shape.kind === 'fibo' ? shape.rayEnd : shape.x2;
-		const lineY = shape.kind === 'fibo' ? shape.yMid : shape.y1;
+		const x1 = shape.kind === 'fibo' || shape.kind === 'buy_sell' ? shape.left : shape.x1;
+		const x2 = shape.kind === 'fibo' ? shape.rayEnd : shape.kind === 'buy_sell' ? shape.right : shape.x2;
+		const lineY = shape.kind === 'fibo' ? shape.yMid : shape.kind === 'buy_sell' ? shape.yEntry : shape.y1;
 		const minX = Math.min(x1, x2) - edgeToleranceX;
 		const maxX = Math.max(x1, x2) + edgeToleranceX;
 		const dy = Math.abs(y - lineY);
@@ -188,6 +242,17 @@ export function findFocusedDrawingId(
 	for (let i = shapes.length - 1; i >= 0; i -= 1) {
 		const shape = shapes[i];
 		if (!shape) continue;
+		if (shape.kind === 'buy_sell') {
+			if (
+				x >= shape.left - edgeToleranceX &&
+				x <= shape.right + edgeToleranceX &&
+				y >= shape.yTop - edgeToleranceX &&
+				y <= shape.yBottom + edgeToleranceX
+			) {
+				return shape.item.id;
+			}
+			continue;
+		}
 		if (shape.kind === 'fibo') {
 			if (
 				x >= shape.left - edgeToleranceX &&

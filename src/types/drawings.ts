@@ -1,8 +1,9 @@
 import type { UTCTimestamp } from 'lightweight-charts';
 import type { Timeframe } from '../config/watchlist';
 
-export type DrawingKind = 'ray' | 'rectangle' | 'segment' | 'fibo';
+export type DrawingKind = 'ray' | 'rectangle' | 'segment' | 'fibo' | 'buy_sell';
 export type FiboDirection = 'up' | 'down';
+export type BuySellSide = 'buy' | 'sell';
 
 export interface PriceTimePoint {
   time: UTCTimestamp;
@@ -20,6 +21,9 @@ export interface DrawingObject {
   symbol: string;
   kind: DrawingKind;
   direction?: FiboDirection;
+  side?: BuySellSide;
+  targetPrice?: number;
+  stopPrice?: number;
   /** Timeframe the drawing was created on; omitted only for legacy saved drawings. */
   sourceTimeframe?: Timeframe;
   /** Для луча и отрезка — опорная точка; для прямоугольника — первый угол (t1, p1) */
@@ -32,7 +36,7 @@ export interface DrawingObject {
 export interface DrawingPreset {
   id: string;
   name: string;
-  kind: DrawingKind;
+  kind: Exclude<DrawingKind, 'buy_sell'>;
   direction?: FiboDirection;
   color: string;
   lineWidth: number;

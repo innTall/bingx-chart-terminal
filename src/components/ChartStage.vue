@@ -21,6 +21,7 @@ import type { PriceAlert } from '../types/alerts';
 import ChartAlertsOverlay from './ChartAlertsOverlay.vue';
 import { captureChartAreaBlob, type AlertBadgeSnapshot } from '../utils/captureChart';
 import { fromChartTimestamp, toChartTimestamp } from '../utils/chartCoordinates';
+import { formatCompactPrice } from '../utils/priceFormatting';
 
 interface VisibleBounds {
 	minLow: number;
@@ -43,36 +44,6 @@ const VERTICAL_SCALE_CONFIG = {
 };
 
 const PRICE_MAX_CHARS = 7;
-
-function formatCompactPrice(val: number, decimalSep = '.'): string {
-	if (!Number.isFinite(val)) return '—';
-	const sign = val < 0 ? '-' : '';
-	const absVal = Math.abs(val);
-	const intPart = Math.trunc(absVal).toString();
-	const intLenWithSign = sign.length + intPart.length;
-
-	if (intLenWithSign >= PRICE_MAX_CHARS) {
-		return `${sign}${Math.round(absVal).toString()}`;
-	}
-
-	const remainingForDecimalAndFrac = PRICE_MAX_CHARS - intLenWithSign;
-	if (remainingForDecimalAndFrac <= 1) {
-		return `${sign}${Math.round(absVal).toString()}`;
-	}
-
-	const maxDecimals = remainingForDecimalAndFrac - 1;
-	const factor = 10 ** maxDecimals;
-	const roundedAbs = Math.round(absVal * factor) / factor;
-
-	const roundedInt = Math.trunc(roundedAbs).toString();
-	if (sign.length + roundedInt.length >= PRICE_MAX_CHARS) {
-		return `${sign}${Math.round(roundedAbs).toString()}`;
-	}
-
-	const fixed = roundedAbs.toFixed(maxDecimals).replace(/\.?0+$/, '');
-	const result = `${sign}${fixed}`.replace('.', decimalSep);
-	return result.slice(0, PRICE_MAX_CHARS);
-}
 
 const props = defineProps<{
 	candles: Candle[];

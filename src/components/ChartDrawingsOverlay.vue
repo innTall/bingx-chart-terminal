@@ -7,6 +7,7 @@ import SegmentDrawing from './drawings/SegmentDrawing.vue';
 import RayDrawing from './drawings/RayDrawing.vue';
 import RectangleDrawing from './drawings/RectangleDrawing.vue';
 import FiboDrawing from './drawings/FiboDrawing.vue';
+import BuySellDrawing from './drawings/BuySellDrawing.vue';
 import DrawingStyleToolbar from './drawings/DrawingStyleToolbar.vue';
 import {
 	DEFAULT_DRAWING_STYLE,
@@ -35,6 +36,7 @@ import {
 	type ProjectedDrawing,
 } from '../utils/drawingGeometry';
 import { updateDrawingForDrag, type DragMode } from '../utils/drawingDrag';
+import { formatCompactPrice } from '../utils/priceFormatting';
 
 const props = defineProps<{
 	chart: IChartApi | null;
@@ -81,6 +83,9 @@ const selectedDrawing = computed(
 );
 
 function canEditDrawing(drawing: DrawingObject): boolean {
+	if (drawing.kind === 'buy_sell') {
+		return drawing.sourceTimeframe === props.timeframe;
+	}
 	if (!drawing.sourceTimeframe) return true;
 	return TIMEFRAME_SECONDS[props.timeframe] >= TIMEFRAME_SECONDS[drawing.sourceTimeframe];
 }
@@ -209,8 +214,40 @@ function timeToX(time: UTCTimestamp): number | null {
 	return null;
 }
 
+function getBuySellX(_drawing: DrawingObject, time: UTCTimestamp): number | null {
+	const directX = timeToCoordinate(props.chart, Number(time));
+	if (directX !== null) return directX;
+
+	const lastCandle = props.candles[props.candles.length - 1];
+	if (!lastCandle || Number(time) < lastCandle.time) return null;
+	const lastX = timeToCoordinate(props.chart, lastCandle.time);
+	const barSpacing = props.chart?.timeScale().options().barSpacing;
+	if (lastX === null || typeof barSpacing !== 'number' || barSpacing <= 0) return null;
+	return (
+		lastX +
+		((Number(time) - lastCandle.time) / TIMEFRAME_SECONDS[props.timeframe]) * barSpacing
+	);
+}
+
 function xToTime(x: number): UTCTimestamp | null {
 	return coordinateToTime(props.chart, x);
+}
+
+function formatPositionPrice(price: number): string {
+	return formatCompactPrice(price);
+}
+
+function formatPositionLevelLabel(label: 'TP' | 'SL', price: number, entry: number): string {
+	const percentage = (Math.abs(price - entry) / Math.abs(entry)) * 100;
+	const sign = percentage > 0 ? '+' : '';
+	return `${label} ${formatPositionPrice(price)} (${sign}${percentage.toFixed(1)}%)`;
+}
+
+function formatPositionEntryLabel(entry: number, target: number, stop: number): string {
+	const risk = Math.abs(stop - entry);
+	const reward = Math.abs(target - entry);
+	const ratio = risk > 0 ? (reward / risk).toFixed(1) : '—';
+	return `Entry ${formatPositionPrice(entry)} ${ratio}`;
 }
 
 function getLocalCoords(event: PointerEvent): { x: number; y: number } | null {
@@ -306,8 +343,45 @@ function handleOverlayPointerDown(event: PointerEvent) {
 	if (event.button !== 0) return;
 	if (props.activeTool === 'none') return;
 
-	const point = pickPoint(event, true);
+	const isPositionTool =
+		props.activeTool === 'position-buy' || props.activeTool === 'position-sell';
+	const point = pickPoint(event, !isPositionTool);
 	if (!point) return;
+
+	if (isPositionTool) {
+		const existingPosition = props.drawings.some((drawing) => drawing.kind === 'buy_sell');
+		if (existingPosition && !window.confirm('Change?')) return;
+		if (!existingPosition && props.drawings.length >= 20) return;
+
+		const side = props.activeTool === 'position-buy' ? 'buy' : 'sell';
+		const range = point.price * 0.01;
+		const timeframeSeconds = TIMEFRAME_SECONDS[props.timeframe];
+		const id = `buy_sell_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+		const position: DrawingObject = {
+			id,
+			symbol: props.symbol,
+			kind: 'buy_sell',
+			side,
+			start: point,
+			end: {
+				time: (Number(point.time) + timeframeSeconds * 10) as UTCTimestamp,
+				price: point.price,
+			},
+			targetPrice: side === 'buy' ? point.price + range : point.price - range,
+			stopPrice: side === 'buy' ? point.price - range : point.price + range,
+			sourceTimeframe: props.timeframe,
+			style: { ...DEFAULT_DRAWING_STYLE, label: side === 'buy' ? 'Buy' : 'Sell' },
+		};
+		selectedId.value = id;
+		focusedId.value = null;
+		clearMagnetTarget();
+		commitDrawings([
+			...props.drawings.filter((drawing) => drawing.kind !== 'buy_sell'),
+			position,
+		]);
+		emit('clear-tool');
+		return;
+	}
 
 	if (props.activeTool === 'fibo-up' || props.activeTool === 'fibo-down') {
 		if (!pendingFiboStart.value) {
@@ -451,6 +525,47 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
 }
 
+function handleBuySellEntryPointerDown(event: PointerEvent, item: DrawingObject) {
+	if (event.button !== 0 || props.activeTool !== 'none') return;
+	event.stopPropagation();
+	if (!canEditDrawing(item) || item.kind !== 'buy_sell' || !item.end) return;
+	const point = pickPoint(event, false);
+	if (!point) return;
+	selectedId.value = item.id;
+	dragState = {
+		type: 'move-buy-sell',
+		id: item.id,
+		anchor: point,
+		origStart: { ...item.start },
+		origEnd: { ...item.end },
+		origTargetPrice: item.targetPrice ?? item.start.price,
+		origStopPrice: item.stopPrice ?? item.start.price,
+	};
+	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+}
+
+function handleBuySellLevelPointerDown(
+	event: PointerEvent,
+	item: DrawingObject,
+	level: 'top' | 'bottom'
+) {
+	if (event.button !== 0 || props.activeTool !== 'none') return;
+	event.stopPropagation();
+	if (!canEditDrawing(item) || item.kind !== 'buy_sell') return;
+	selectedId.value = item.id;
+	dragState = { type: 'resize-buy-sell-level', id: item.id, level };
+	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+}
+
+function handleBuySellWidthPointerDown(event: PointerEvent, item: DrawingObject) {
+	if (event.button !== 0 || props.activeTool !== 'none') return;
+	event.stopPropagation();
+	if (!canEditDrawing(item) || item.kind !== 'buy_sell') return;
+	selectedId.value = item.id;
+	dragState = { type: 'resize-buy-sell-width', id: item.id };
+	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+}
+
 function handleRectRightEdgePointerDown(event: PointerEvent, item: DrawingObject) {
 	if (event.button !== 0) return;
 	if (props.activeTool !== 'none') return;
@@ -471,11 +586,31 @@ function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject)
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
 }
 
+function pickBuySellWidthPoint(event: PointerEvent): PriceTimePoint | null {
+	const point = pickPoint(event, false);
+	const coords = getLocalCoords(event);
+	const lastCandle = props.candles[props.candles.length - 1];
+	if (!point || !coords || !lastCandle) return point;
+	const lastX = timeToCoordinate(props.chart, lastCandle.time);
+	const barSpacing = props.chart?.timeScale().options().barSpacing;
+	if (lastX === null || typeof barSpacing !== 'number' || barSpacing <= 0 || coords.x <= lastX) {
+		return point;
+	}
+	return {
+		...point,
+		time: (lastCandle.time +
+			((coords.x - lastX) / barSpacing) * TIMEFRAME_SECONDS[props.timeframe]) as UTCTimestamp,
+	};
+}
+
 function handlePointerMove(event: PointerEvent) {
 	if (dragState.type === 'none') {
 		if (props.activeTool !== 'none') {
 			focusedId.value = null;
-			pickPoint(event, true);
+			pickPoint(
+				event,
+				props.activeTool !== 'position-buy' && props.activeTool !== 'position-sell'
+			);
 		} else {
 			clearMagnetTarget();
 			const coords = getLocalCoords(event);
@@ -498,6 +633,23 @@ function handlePointerMove(event: PointerEvent) {
 		// Сегмент строго горизонтальный и правый край не цепляется
 		clearMagnetTarget();
 		const point = pickPoint(event, false);
+		if (!point) return;
+		applyDragUpdate(point);
+		return;
+	}
+
+	if (
+		dragState.type === 'move-buy-sell' ||
+		dragState.type === 'resize-buy-sell-level'
+	) {
+		const point = pickPoint(event, false);
+		if (!point) return;
+		applyDragUpdate(point);
+		return;
+	}
+
+	if (dragState.type === 'resize-buy-sell-width') {
+		const point = pickBuySellWidthPoint(event);
 		if (!point) return;
 		applyDragUpdate(point);
 		return;
@@ -628,7 +780,7 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 	const paneWidth = props.chart?.timeScale().width() ?? fullWidth;
 	const currentSeconds = TIMEFRAME_SECONDS[props.timeframe];
 	const visibleDrawings = props.drawings.filter((drawing) => {
-		if (drawing.kind === 'fibo') {
+		if (drawing.kind === 'fibo' || drawing.kind === 'buy_sell') {
 			return drawing.sourceTimeframe === props.timeframe;
 		}
 		if (!drawing.sourceTimeframe) return true;
@@ -643,6 +795,8 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 			findMatchingLtfWickTime(drawing) ?? drawing.start.time,
 		segmentStartX: getSegmentStartX,
 		segmentEndX: getSegmentEndX,
+		buySellStartX: getBuySellX,
+		buySellEndX: getBuySellX,
 	});
 });
 
@@ -732,6 +886,17 @@ onBeforeUnmount(() => {
 				<FiboDrawing v-else-if="shape.kind === 'fibo'" :item="shape.item" :left="shape.left"
 					:right="shape.right" :y-top="shape.yTop" :y-mid="shape.yMid" :y-bottom="shape.yBottom"
 					:ray-end="shape.rayEnd" @shape-pointer-down="handleShapePointerDown" />
+
+				<BuySellDrawing v-else-if="shape.kind === 'buy_sell'" :item="shape.item" :left="shape.left"
+					:right="shape.right" :y-entry="shape.yEntry" :y-target="shape.yTarget" :y-stop="shape.yStop"
+					:y-top="shape.yTop" :y-bottom="shape.yBottom"
+					:entry-label="formatPositionEntryLabel(shape.entryPrice, shape.targetPrice, shape.stopPrice)"
+					:target-label="formatPositionLevelLabel('TP', shape.targetPrice, shape.entryPrice)"
+					:stop-label="formatPositionLevelLabel('SL', shape.stopPrice, shape.entryPrice)"
+					:selected="selectedId === shape.item.id"
+					@entry-pointer-down="handleBuySellEntryPointerDown"
+					@level-pointer-down="handleBuySellLevelPointerDown"
+					@width-pointer-down="handleBuySellWidthPointerDown" />
 			</g>
 
 			<!-- Индикатор магнитной привязки к H / L / C при наведении или протягивании конца -->

@@ -269,6 +269,7 @@ async function pollActiveAlertPrices() {
 }
 
 function handleSavePreset(drawing: DrawingObject) {
+	if (drawing.kind === 'buy_sell') return;
 	const customText = drawing.style.label.trim();
 	const resolvedName =
 		customText.length > 0

@@ -8,7 +8,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isPriceTimePoint(value: unknown): boolean {
+function isPriceTimePoint(
+	value: unknown
+): value is Record<string, unknown> & { time: number; price: number } {
 	if (!isRecord(value)) return false;
 	return (
 		typeof value.time === 'number' &&
@@ -26,7 +28,8 @@ function hasLabel(item: unknown): item is DrawingObject {
 		item.kind !== 'ray' &&
 		item.kind !== 'rectangle' &&
 		item.kind !== 'segment' &&
-		item.kind !== 'fibo'
+		item.kind !== 'fibo' &&
+		item.kind !== 'buy_sell'
 	) {
 		return false;
 	}
@@ -40,6 +43,24 @@ function hasLabel(item: unknown): item is DrawingObject {
 		(item.end !== undefined &&
 			typeof sourceTimeframe === 'string' &&
 			TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]));
+	const validBuySell =
+		item.kind !== 'buy_sell' ||
+		(item.side === 'buy' ||
+			item.side === 'sell') &&
+			typeof item.targetPrice === 'number' &&
+			Number.isFinite(item.targetPrice) &&
+			item.targetPrice > 0 &&
+			typeof item.stopPrice === 'number' &&
+			Number.isFinite(item.stopPrice) &&
+			item.stopPrice > 0 &&
+			isPriceTimePoint(item.start) &&
+			(item.side === 'buy'
+				? item.targetPrice > item.start.price && item.stopPrice < item.start.price
+				: item.targetPrice < item.start.price && item.stopPrice > item.start.price) &&
+			item.end !== undefined &&
+			isPriceTimePoint(item.end) &&
+			typeof sourceTimeframe === 'string' &&
+			TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]);
 	return (
 		typeof item.id === 'string' &&
 		item.id.length > 0 &&
@@ -49,6 +70,7 @@ function hasLabel(item: unknown): item is DrawingObject {
 		(item.end === undefined || isPriceTimePoint(item.end)) &&
 		validDirection &&
 		validFiboAnchors &&
+		validBuySell &&
 		(sourceTimeframe === undefined ||
 			(typeof sourceTimeframe === 'string' &&
 				TIMEFRAMES.includes(sourceTimeframe as (typeof TIMEFRAMES)[number]))) &&

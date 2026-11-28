@@ -5,10 +5,18 @@ import { TIMEFRAMES, type Timeframe } from '../config/watchlist';
 import type { DrawingKind, DrawingPreset } from '../types/drawings';
 
 export type DataSourceType = 'bingx' | 'oanda';
-export type DrawingToolType = 'none' | 'segment' | 'ray' | 'rectangle' | 'fibo-up' | 'fibo-down';
+export type DrawingToolType =
+	| 'none'
+	| 'segment'
+	| 'ray'
+	| 'rectangle'
+	| 'fibo-up'
+	| 'fibo-down'
+	| 'position-buy'
+	| 'position-sell';
 
 const TOOL_CONFIG: ReadonlyArray<{
-	kind: Exclude<DrawingKind, 'fibo'>;
+	kind: Exclude<DrawingKind, 'fibo' | 'buy_sell'>;
 	label: string;
 }> = [
 		{ kind: 'segment', label: 'Segment' },
@@ -201,17 +209,23 @@ onBeforeUnmount(() => {
 				</div>
 
 				<div class="relative flex items-center rounded border border-slate-700/80 bg-neutral-900/80">
-					<button type="button" aria-label="Draw Fibo up range" title="DRup (two clicks)"
+					<button type="button" aria-label="Draw Fibo up range"
 						class="rounded-l px-2 py-1 font-medium transition"
-						:class="activeTool === 'fibo-up' ? 'bg-rose-500/20 text-rose-200' : 'text-slate-300 hover:bg-neutral-800'"
+						:class="activeTool === 'fibo-up' ? 'bg-emerald-500/20 text-emerald-300' : 'text-emerald-500/80 hover:bg-emerald-500/15 hover:text-emerald-300'"
 						@click="selectFiboDirection('up')">
-						DRup
+						<svg aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4" fill="none">
+							<path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.5"
+								stroke-linecap="round" />
+						</svg>
 					</button>
-					<button type="button" aria-label="Draw Fibo down range" title="DRdown (two clicks)"
+					<button type="button" aria-label="Draw Fibo down range"
 						class="border-l border-slate-700/80 px-2 py-1 font-medium transition"
-						:class="activeTool === 'fibo-down' ? 'bg-emerald-500/20 text-emerald-200' : 'text-slate-300 hover:bg-neutral-800'"
+						:class="activeTool === 'fibo-down' ? 'bg-rose-500/20 text-rose-300' : 'text-rose-500/80 hover:bg-rose-500/15 hover:text-rose-300'"
 						@click="selectFiboDirection('down')">
-						DRdown
+						<svg aria-hidden="true" viewBox="0 0 16 16" class="h-4 w-4" fill="none">
+							<path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.5"
+								stroke-linecap="round" />
+						</svg>
 					</button>
 					<button type="button" aria-label="Fibo presets" :aria-expanded="openMenuKind === 'fibo'"
 						class="rounded-r border-l border-slate-700/80 px-1 py-1 text-slate-400 transition hover:bg-neutral-800 hover:text-slate-200"
@@ -239,6 +253,21 @@ onBeforeUnmount(() => {
 							</button>
 						</div>
 					</div>
+				</div>
+
+				<div class="flex items-center rounded border border-slate-700/80 bg-neutral-900/80">
+					<button type="button" aria-label="Draw Buy position"
+						class="rounded-l px-2 py-1 font-medium transition"
+						:class="activeTool === 'position-buy' ? 'bg-emerald-500/20 text-emerald-300' : 'text-emerald-500/80 hover:bg-emerald-500/15 hover:text-emerald-300'"
+						@click="handleDraftClick('position-buy')">
+						Buy
+					</button>
+					<button type="button" aria-label="Draw Sell position"
+						class="border-l border-slate-700/80 px-2 py-1 font-medium transition"
+						:class="activeTool === 'position-sell' ? 'bg-rose-500/20 text-rose-300' : 'text-rose-500/80 hover:bg-rose-500/15 hover:text-rose-300'"
+						@click="handleDraftClick('position-sell')">
+						Sell
+					</button>
 				</div>
 
 				<span class="mx-0.5 h-4 w-px bg-slate-800" />

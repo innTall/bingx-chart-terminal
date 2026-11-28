@@ -51,7 +51,7 @@ function onLabelInput(event: Event) {
 			class="w-32 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-100 placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
 			@input="onLabelInput" />
 
-		<button type="button" title="Save as preset"
+		<button v-if="drawing.kind !== 'buy_sell'" type="button" title="Save as preset"
 			class="rounded p-1 text-amber-300 transition hover:bg-amber-950/50 hover:text-amber-200"
 			@click="emit('save-preset')">
 			<BookmarkPlus class="h-3.5 w-3.5" />
