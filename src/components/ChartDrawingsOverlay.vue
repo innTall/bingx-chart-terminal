@@ -61,6 +61,7 @@ const selectedId = ref<string | null>(null);
 const renderTick = ref<number>(0);
 const magnetTarget = ref<MagnetSnapTarget | null>(null);
 const focusedId = ref<string | null>(null);
+const buySellResizeGuideY = ref<number | null>(null);
 const pendingFiboStart = ref<{
 	point: PriceTimePoint;
 	direction: FiboDirection;
@@ -75,6 +76,11 @@ const recentCandles = computed(() =>
 		? props.candles.slice(-MAGNET_CONFIG.recentCandleLimit)
 		: props.candles
 );
+
+const plotWidth = computed(() => {
+	void renderTick.value;
+	return props.chart?.timeScale().width() ?? overlayRef.value?.clientWidth ?? 0;
+});
 
 const selectedDrawing = computed(
 	() =>
@@ -552,8 +558,12 @@ function handleBuySellLevelPointerDown(
 	if (event.button !== 0 || props.activeTool !== 'none') return;
 	event.stopPropagation();
 	if (!canEditDrawing(item) || item.kind !== 'buy_sell') return;
+	const isTargetLevel = (level === 'top') === (item.side === 'buy');
+	const levelPrice = isTargetLevel ? item.targetPrice : item.stopPrice;
+	if (levelPrice === undefined) return;
 	selectedId.value = item.id;
 	dragState = { type: 'resize-buy-sell-level', id: item.id, level };
+	buySellResizeGuideY.value = priceToY(levelPrice);
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
 }
 
@@ -639,9 +649,16 @@ function handlePointerMove(event: PointerEvent) {
 	}
 
 	if (
-		dragState.type === 'move-buy-sell' ||
 		dragState.type === 'resize-buy-sell-level'
 	) {
+		const point = pickPoint(event, false);
+		if (!point) return;
+		buySellResizeGuideY.value = priceToY(point.price);
+		applyDragUpdate(point);
+		return;
+	}
+
+	if (dragState.type === 'move-buy-sell') {
 		const point = pickPoint(event, false);
 		if (!point) return;
 		applyDragUpdate(point);
@@ -712,6 +729,7 @@ function handlePointerUp() {
 		emit('clear-tool');
 	}
 	dragState = { type: 'none' };
+	buySellResizeGuideY.value = null;
 	clearMagnetTarget();
 }
 
@@ -805,6 +823,7 @@ watch(
 	() => {
 		selectedId.value = null;
 		focusedId.value = null;
+		buySellResizeGuideY.value = null;
 		pendingFiboStart.value = null;
 		dragState = { type: 'none' };
 		clearMagnetTarget();
@@ -898,6 +917,11 @@ onBeforeUnmount(() => {
 					@level-pointer-down="handleBuySellLevelPointerDown"
 					@width-pointer-down="handleBuySellWidthPointerDown" />
 			</g>
+
+			<line v-if="buySellResizeGuideY !== null" x1="0" :x2="plotWidth"
+				:y1="buySellResizeGuideY" :y2="buySellResizeGuideY" stroke="#94a3b8"
+				stroke-width="1" stroke-dasharray="3 4" stroke-opacity="0.65"
+				class="pointer-events-none" />
 
 			<!-- Индикатор магнитной привязки к H / L / C при наведении или протягивании конца -->
 			<g v-if="magnetTarget" class="pointer-events-none">
