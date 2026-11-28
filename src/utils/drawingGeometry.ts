@@ -32,18 +32,31 @@ export type ProjectedDrawing =
 export interface DrawingProjection {
 	timeToX: (time: PriceTimePoint['time']) => number | null;
 	priceToY: (price: number) => number | null;
+	leftEdge?: number;
 	rightEdge: number;
+	projectedStartTime?: (item: DrawingObject) => PriceTimePoint['time'];
+	segmentStartX?: (item: DrawingObject, startTime: PriceTimePoint['time']) => number | null;
+	segmentEndX?: (item: DrawingObject, endTime: PriceTimePoint['time']) => number | null;
 }
 
 export function projectDrawings(
 	drawings: readonly DrawingObject[],
-	{ timeToX, priceToY, rightEdge }: DrawingProjection
+	{
+		timeToX,
+		priceToY,
+		leftEdge = 0,
+		rightEdge,
+		projectedStartTime,
+		segmentStartX,
+		segmentEndX,
+	}: DrawingProjection
 ): ProjectedDrawing[] {
 	const result: ProjectedDrawing[] = [];
 
 	for (const item of drawings) {
 		const y1 = priceToY(item.start.price);
-		const x1 = timeToX(item.start.time);
+		const startTime = projectedStartTime?.(item) ?? item.start.time;
+		const x1 = timeToX(startTime);
 		if (y1 === null) continue;
 
 		if (item.kind === 'ray') {
@@ -59,24 +72,34 @@ export function projectDrawings(
 			continue;
 		}
 
-		if (x1 === null) continue;
 		const endPoint = item.end ?? item.start;
-		const x2 = timeToX(endPoint.time);
-		if (x2 === null) continue;
 
 		if (item.kind === 'segment') {
+			const startX = segmentStartX
+				? segmentStartX(item, startTime)
+				: x1;
+			const endX = segmentEndX
+				? segmentEndX(item, endPoint.time)
+				: timeToX(endPoint.time);
+			if (startX === null || endX === null) continue;
+			const segmentRightEdge = Math.max(leftEdge, rightEdge - 5);
+			const clampedStartX = Math.min(segmentRightEdge, Math.max(leftEdge, startX));
+			const clampedEndX = Math.min(segmentRightEdge, Math.max(leftEdge, endX));
 			result.push({
 				item,
 				kind: 'segment',
-				x1,
+				x1: clampedStartX,
 				y1,
-				x2,
-				endX: x2,
+				x2: clampedEndX,
+				endX: clampedEndX,
 				price: item.start.price,
 			});
 			continue;
 		}
 
+		if (x1 === null) continue;
+		const x2 = timeToX(endPoint.time);
+		if (x2 === null) continue;
 		const y2 = priceToY(endPoint.price);
 		if (y2 === null) continue;
 		result.push({

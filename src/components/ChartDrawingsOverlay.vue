@@ -68,8 +68,95 @@ const recentCandles = computed(() =>
 );
 
 const selectedDrawing = computed(
-	() => props.drawings.find((d) => d.id === selectedId.value) ?? null
+	() =>
+		props.drawings.find((drawing) => drawing.id === selectedId.value && canEditDrawing(drawing)) ??
+		null
 );
+
+function canEditDrawing(drawing: DrawingObject): boolean {
+	if (!drawing.sourceTimeframe) return true;
+	return TIMEFRAME_SECONDS[props.timeframe] >= TIMEFRAME_SECONDS[drawing.sourceTimeframe];
+}
+
+function findMatchingLtfWickTime(drawing: DrawingObject): UTCTimestamp | null {
+	const sourceTimeframe = drawing.sourceTimeframe;
+	if (
+		!sourceTimeframe ||
+		TIMEFRAME_SECONDS[props.timeframe] >= TIMEFRAME_SECONDS[sourceTimeframe] ||
+		(drawing.kind !== 'segment' && drawing.kind !== 'ray')
+	) {
+		return null;
+	}
+
+	const startTime = Number(drawing.start.time);
+	const firstLoadedTime = props.candles[0]?.time;
+	const startPrecedesLoadedCandles =
+		drawing.kind === 'segment' &&
+		firstLoadedTime !== undefined &&
+		startTime < firstLoadedTime;
+	const windowEnd = startPrecedesLoadedCandles
+		? Number.POSITIVE_INFINITY
+		: startTime + TIMEFRAME_SECONDS[sourceTimeframe];
+	const priceTolerance = Math.max(
+		Number.EPSILON * Math.max(1, Math.abs(drawing.start.price)) * 16,
+		Math.abs(drawing.start.price) * 1e-10,
+		1e-12
+	);
+	let matchingTime: number | null = null;
+	const searchStartTime =
+		startPrecedesLoadedCandles && firstLoadedTime !== undefined
+			? firstLoadedTime
+			: startTime;
+
+	for (const candle of props.candles) {
+		if (candle.time < searchStartTime || candle.time >= windowEnd) continue;
+		if (
+			Math.abs(candle.high - drawing.start.price) <= priceTolerance ||
+			Math.abs(candle.low - drawing.start.price) <= priceTolerance
+		) {
+			if (matchingTime === null || candle.time < matchingTime) {
+				matchingTime = candle.time;
+			}
+		}
+	}
+
+	return matchingTime === null ? null : (matchingTime as UTCTimestamp);
+}
+
+function getSegmentStartX(
+	drawing: DrawingObject,
+	startTime: UTCTimestamp
+): number | null {
+	const x = timeToX(startTime);
+	if (x !== null) return x;
+
+	const firstLoadedTime = props.candles[0]?.time;
+	if (
+		drawing.kind === 'segment' &&
+		drawing.sourceTimeframe &&
+		TIMEFRAME_SECONDS[props.timeframe] < TIMEFRAME_SECONDS[drawing.sourceTimeframe] &&
+		firstLoadedTime !== undefined &&
+		Number(startTime) < firstLoadedTime
+	) {
+		return 0;
+	}
+
+	return null;
+}
+
+function getSegmentEndX(
+	_drawing: DrawingObject,
+	endTime: UTCTimestamp
+): number | null {
+	const firstLoadedTime = props.candles[0]?.time;
+	if (firstLoadedTime !== undefined && Number(endTime) < firstLoadedTime) return 0;
+
+	const lastCandle = props.candles[props.candles.length - 1];
+	const maxEndTime = lastCandle
+		? lastCandle.time + TIMEFRAME_SECONDS[props.timeframe] * 5
+		: Number(endTime);
+	return timeToX(Math.min(Number(endTime), maxEndTime) as UTCTimestamp);
+}
 
 function clearMagnetTarget() {
 	if (magnetTarget.value !== null) {
@@ -282,6 +369,7 @@ function handleShapePointerDown(event: PointerEvent, item: DrawingObject) {
 			targetItem = candidate;
 		}
 	}
+	if (!canEditDrawing(targetItem)) return;
 
 	selectedId.value = targetItem.id;
 	focusedId.value = null;
@@ -322,6 +410,7 @@ function handleRectRightEdgePointerDown(event: PointerEvent, item: DrawingObject
 	if (event.button !== 0) return;
 	if (props.activeTool !== 'none') return;
 	event.stopPropagation();
+	if (!canEditDrawing(item)) return;
 	selectedId.value = item.id;
 	dragState = { type: 'resize-rect-end', id: item.id };
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
@@ -331,6 +420,7 @@ function handleSegmentRightPointerDown(event: PointerEvent, item: DrawingObject)
 	if (event.button !== 0) return;
 	if (props.activeTool !== 'none') return;
 	event.stopPropagation();
+	if (!canEditDrawing(item)) return;
 	selectedId.value = item.id;
 	dragState = { type: 'resize-segment-end', id: item.id };
 	(event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
@@ -454,6 +544,8 @@ function clearChartCrosshair() {
 function updateSelectedStyle(patch: Partial<DrawingObject['style']>) {
 	if (!selectedId.value) return;
 	const id = selectedId.value;
+	const drawing = props.drawings.find((item) => item.id === id);
+	if (!drawing || !canEditDrawing(drawing)) return;
 	commitDrawings(
 		props.drawings.map((d) =>
 			d.id === id ? { ...d, style: { ...d.style, ...patch } } : d
@@ -469,6 +561,8 @@ function saveSelectedAsPreset() {
 function deleteSelected() {
 	if (!selectedId.value) return;
 	const id = selectedId.value;
+	const drawing = props.drawings.find((item) => item.id === id);
+	if (!drawing || !canEditDrawing(drawing)) return;
 	selectedId.value = null;
 	commitDrawings(props.drawings.filter((d) => d.id !== id));
 }
@@ -495,7 +589,12 @@ const computedShapes = computed<ProjectedDrawing[]>(() => {
 	return projectDrawings(visibleDrawings, {
 		timeToX,
 		priceToY,
+		leftEdge: 0,
 		rightEdge: Math.max(0, paneWidth),
+		projectedStartTime: (drawing) =>
+			findMatchingLtfWickTime(drawing) ?? drawing.start.time,
+		segmentStartX: getSegmentStartX,
+		segmentEndX: getSegmentEndX,
 	});
 });
 
